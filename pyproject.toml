@@ -24,6 +24,7 @@ vision = [
 ]
 rpi = [
   "adafruit-blinka>=8.0",
+  "adafruit-circuitpython-ina219>=3.4",
   "adafruit-circuitpython-vl53l1x>=1.2",
   "gpiozero>=2.0",
   "lgpio>=0.2",

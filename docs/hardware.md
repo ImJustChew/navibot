@@ -28,6 +28,18 @@ python3 scripts/vl53l1x_xshut_read.py
 
 Override mappings with repeated `--sensor name:xshut_gpio:i2c_address` arguments.
 
+## INA219 Current Sensor
+
+The INA219 current sensor is on I2C address `0x40`.
+
+Run:
+
+```bash
+python3 scripts/ina219_read.py
+```
+
+The script prints bus voltage, shunt voltage, estimated load voltage, current, and power.
+
 ## Wheels And Encoders
 
 - Wheel: D-shaped shaft rubber tire accessory model, color option `43MM轮子一个`.
