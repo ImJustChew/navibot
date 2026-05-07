@@ -1,4 +1,4 @@
-"""Watch one quadrature encoder and print signed counts.
+"""Watch one quadrature encoder and print signed counts with lgpio callbacks.
 
 Spin the wheel by hand:
 - one direction should increase the count
@@ -27,45 +27,70 @@ QUADRATURE_DELTA = {
 class Encoder:
     def __init__(self, pin_a: int, pin_b: int, pull_up: bool, inverted: bool) -> None:
         try:
-            from gpiozero import DigitalInputDevice
+            import lgpio
         except ImportError as exc:
             msg = "Install Raspberry Pi dependencies with: python -m pip install -e '.[rpi]'"
             raise RuntimeError(msg) from exc
 
+        self._lgpio = lgpio
         self._lock = Lock()
-        self._a = DigitalInputDevice(pin_a, pull_up=pull_up)
-        self._b = DigitalInputDevice(pin_b, pull_up=pull_up)
+        self._chip = lgpio.gpiochip_open(0)
+        self._pin_a = pin_a
+        self._pin_b = pin_b
         self._multiplier = -1 if inverted else 1
         self._count = 0
         self._bad = 0
-        self._state = self._read_state()
+        self._edge_count = 0
+        self._last_tick_ns = 0
 
-        self._a.when_activated = self._on_edge
-        self._a.when_deactivated = self._on_edge
-        self._b.when_activated = self._on_edge
-        self._b.when_deactivated = self._on_edge
+        line_flags = lgpio.SET_PULL_UP if pull_up else 0
+        lgpio.gpio_claim_alert(self._chip, pin_a, lgpio.BOTH_EDGES, line_flags)
+        lgpio.gpio_claim_alert(self._chip, pin_b, lgpio.BOTH_EDGES, line_flags)
+
+        self._a_level = lgpio.gpio_read(self._chip, pin_a)
+        self._b_level = lgpio.gpio_read(self._chip, pin_b)
+        self._state = self._levels_to_state()
+
+        self._callback_a = lgpio.callback(self._chip, pin_a, lgpio.BOTH_EDGES, self._on_edge)
+        self._callback_b = lgpio.callback(self._chip, pin_b, lgpio.BOTH_EDGES, self._on_edge)
 
     def close(self) -> None:
-        self._a.close()
-        self._b.close()
+        self._callback_a.cancel()
+        self._callback_b.cancel()
+        self._lgpio.gpio_free(self._chip, self._pin_a)
+        self._lgpio.gpio_free(self._chip, self._pin_b)
+        self._lgpio.gpiochip_close(self._chip)
 
-    def snapshot(self) -> tuple[int, int, int]:
+    def snapshot(self) -> tuple[int, int, int, int, int]:
         with self._lock:
-            return self._count, self._bad, self._state
+            return self._count, self._bad, self._state, self._edge_count, self._last_tick_ns
 
-    def _read_state(self) -> int:
-        return (int(self._a.is_active) << 1) | int(self._b.is_active)
+    def _levels_to_state(self) -> int:
+        return (int(self._a_level) << 1) | int(self._b_level)
 
-    def _on_edge(self) -> None:
+    def _on_edge(self, chip: int, gpio: int, level: int, tick_ns: int) -> None:
+        del chip
+        if level not in (0, 1):
+            return
+
         with self._lock:
+            if gpio == self._pin_a:
+                self._a_level = level
+            elif gpio == self._pin_b:
+                self._b_level = level
+            else:
+                return
+
             previous = self._state
-            current = self._read_state()
+            current = self._levels_to_state()
             delta = QUADRATURE_DELTA.get((previous, current))
             if delta is None:
                 self._bad += 1
             else:
                 self._count += delta * self._multiplier
             self._state = current
+            self._edge_count += 1
+            self._last_tick_ns = tick_ns
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,8 +139,11 @@ def main() -> None:
     )
     try:
         while True:
-            count, bad, state = encoder.snapshot()
-            print(f"count={count:+d} bad={bad} state={state:02b}", flush=True)
+            count, bad, state, edges, tick_ns = encoder.snapshot()
+            print(
+                f"count={count:+d} edges={edges} bad={bad} state={state:02b} tick_ns={tick_ns}",
+                flush=True,
+            )
             sleep(args.interval)
     except KeyboardInterrupt:
         print("")

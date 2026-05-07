@@ -83,13 +83,15 @@ Current encoder wiring maps left encoder to GPIO 23/24 and right encoder to GPIO
 
 ## Encoder Performance
 
-Current scripts use GPIO edge callbacks from Python through GPIO Zero. That is acceptable for wiring tests and early tuning, but Raspberry Pi Linux userspace is not real-time. At higher wheel speeds, Python callbacks can miss quadrature edges, especially while also running motor control, networking, camera, or web-server work.
+`scripts/encoder_count_watch.py` uses direct `lgpio` alert callbacks for manual encoder checks. The older motor/PID test scripts still use GPIO Zero wrappers and should be migrated to the same lower-level counter path before relying on odometry.
+
+Direct `lgpio` callbacks are better than GPIO Zero device callbacks for encoder counting, but Raspberry Pi Linux userspace is still not real-time. At higher wheel speeds, Python callbacks can miss quadrature edges, especially while also running motor control, networking, camera, or web-server work.
 
 For production odometry, prefer one of these approaches:
 
 - A small microcontroller, such as RP2040, Arduino, or ESP32, decodes both wheel encoders and sends count snapshots to the Pi over UART/I2C/SPI.
 - A dedicated quadrature counter IC handles encoder counting in hardware.
-- A lower-level Pi GPIO backend, such as `lgpio` or `pigpio`, timestamps edges outside the Python control loop. This is better than pure Python polling, but still does not make Linux real-time.
+- A lower-level Pi GPIO backend, such as `lgpio` or `pigpio`, timestamps edges outside the Python control loop. This is better than GPIO Zero wrappers or Python polling, but still does not make Linux real-time.
 
 Keep Python callbacks short: only update counters in the callback, then do PID/control math in the main loop from sampled counter values.
 
