@@ -12,9 +12,16 @@ Record exact sensor model, I2C addresses, GPIO pins, power budget, and mounting 
 ## Wheels And Encoders
 
 - Wheel: D-shaped shaft rubber tire accessory model, color option `43MM轮子一个`.
-- Encoder: 7 pulses per pin for one wheel rotation.
+- Wheel diameter: 43 mm.
+- Encoder: 7 pulses per pin for one motor-shaft rotation.
 
-Use 7 pulses per rotation when counting a single encoder channel, such as A-channel rising edges. If later tests count both A and B edges or all quadrature transitions, update the effective pulses-per-rotation value in test commands and calibration docs.
+The GA12-N20 encoder is mounted on the motor shaft before the gearbox. With x4 quadrature decoding, counts per final wheel rotation are:
+
+```text
+wheel_counts_per_rev = 7 pulses/channel * 4 edges/pulse * gear_ratio
+```
+
+For a 100:1 gearbox, that is `7 * 4 * 100 = 2800` counts per wheel rotation. Set the actual gearbox ratio in PID distance tests before relying on distance accuracy.
 
 ## Motor Smoke Test
 
@@ -51,6 +58,16 @@ For short powered tests:
 
 ```bash
 python scripts/encoder_motor_accuracy_test.py --rotations 1 --speed 0.20 --timeout-seconds 5 --yes
+```
+
+## PID Distance Drive Test
+
+The paired wheel drive test is `scripts/drive_pid_distance_test.py`. It decodes both A and B encoder channels using x4 quadrature, estimates distance from wheel diameter and gear ratio, and drives both motors forward with per-wheel PID speed control plus left/right synchronization.
+
+The script does not have a simple `--speed` option because speed is controlled through PID targets. Example for a short 200 mm test using a 100:1 gearbox assumption:
+
+```bash
+python scripts/drive_pid_distance_test.py --distance-mm 200 --gear-ratio 100 --target-speed-mm-s 80 --min-pwm 0.18 --max-pwm 0.45 --yes
 ```
 
 ## Docking
