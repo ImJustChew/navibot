@@ -271,19 +271,26 @@ def run_wheel_test(
     label: str,
     wheel: WheelProbe,
     other: WheelProbe,
+    other_label: str,
     pins: WheelPins,
+    other_pins: WheelPins,
     direction: str,
     config: TestConfig,
 ) -> None:
     other.motor.stop()
     wheel.motor.stop()
     wheel.encoder.reset()
+    other.encoder.reset()
     sleep(config.settle_seconds)
 
     print("")
     print(f"Testing {label} {direction}")
     print(f"  motor pins: PWM GPIO {pins.motor.pwm}, IN1 GPIO {pins.motor.in1}, IN2 GPIO {pins.motor.in2}")
     print(f"  encoder pins: A GPIO {pins.encoder.a}, B GPIO {pins.encoder.b}")
+    print(
+        f"  idle {other_label} encoder pins: "
+        f"A GPIO {other_pins.encoder.a}, B GPIO {other_pins.encoder.b}"
+    )
     print(f"  speed={config.speed:.0%}, duration={config.duration_seconds:g}s")
 
     started_at = monotonic()
@@ -299,26 +306,40 @@ def run_wheel_test(
     wheel.motor.stop()
     sleep(config.settle_seconds)
 
-    snapshot = wheel.encoder.snapshot()
+    driven_snapshot = wheel.encoder.snapshot()
+    idle_snapshot = other.encoder.snapshot()
+
+    print_encoder_snapshot(label=f"driven {label}", snapshot=driven_snapshot, elapsed=elapsed)
+    print_encoder_snapshot(label=f"idle {other_label}", snapshot=idle_snapshot, elapsed=elapsed)
+
+    if idle_snapshot.total_edges:
+        print(
+            f"  WARNING: idle {other_label} encoder changed while only {label} motor was driven; "
+            "check encoder wiring, shared grounds, or electrical noise"
+        )
+
+
+def print_encoder_snapshot(label: str, snapshot: EncoderSnapshot, elapsed: float) -> None:
     signed_direction = "positive" if snapshot.quadrature_count > 0 else "negative"
     if snapshot.quadrature_count == 0:
         signed_direction = "none"
 
+    print(f"  {label} encoder:")
     print(
-        "  encoder edges: "
+        "    edges: "
         f"A+={snapshot.a_rising}, A-={snapshot.a_falling}, "
         f"B+={snapshot.b_rising}, B-={snapshot.b_falling}, total={snapshot.total_edges}"
     )
     print(
-        "  quadrature: "
+        "    quadrature: "
         f"count={snapshot.quadrature_count}, direction={signed_direction}, "
         f"bad_transitions={snapshot.bad_transitions}, final_state={snapshot.state:02b}"
     )
-    print(f"  rate: {abs(snapshot.quadrature_count) / elapsed:.1f} quadrature counts/s")
+    print(f"    rate: {abs(snapshot.quadrature_count) / elapsed:.1f} quadrature counts/s")
 
     warnings = diagnose_snapshot(snapshot)
     for warning in warnings:
-        print(f"  WARNING: {warning}")
+        print(f"    WARNING: {warning}")
 
 
 def diagnose_snapshot(snapshot: EncoderSnapshot) -> list[str]:
@@ -345,16 +366,29 @@ def run_gpio_test(config: TestConfig) -> None:
             if wheel_name == "left":
                 wheel = rig.left
                 other = rig.right
+                other_name = "right"
                 pins = config.left
+                other_pins = config.right
             elif wheel_name == "right":
                 wheel = rig.right
                 other = rig.left
+                other_name = "left"
                 pins = config.right
+                other_pins = config.left
             else:
                 raise ValueError(f"Unknown wheel: {wheel_name}")
 
             for direction in config.directions:
-                run_wheel_test(wheel_name, wheel, other, pins, direction, config)
+                run_wheel_test(
+                    wheel_name,
+                    wheel,
+                    other,
+                    other_name,
+                    pins,
+                    other_pins,
+                    direction,
+                    config,
+                )
         print("")
         print("Encoder GPIO validation complete.")
     finally:
