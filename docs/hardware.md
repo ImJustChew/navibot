@@ -70,6 +70,10 @@ The script does not have a simple `--speed` option because speed is controlled t
 python scripts/drive_pid_distance_test.py --distance-mm 200 --gear-ratio 100 --target-speed-mm-s 80 --min-pwm 0.18 --max-pwm 0.45 --yes
 ```
 
+If one wheel runs backward relative to the other, add `--left-motor-inverted` or `--right-motor-inverted`. If encoder counts have the wrong sign, add the matching `--left-encoder-inverted` or `--right-encoder-inverted`.
+
+The script brakes a wheel when it reaches target. To test motor-driver behavior without active braking, use `--coast-on-stop`.
+
 ## Docking
 
 Docking is expected to use a camera-visible fiducial marker, likely ArUco or AprilTag. Record camera model, marker size, marker family, and dock geometry before implementing pose estimation.

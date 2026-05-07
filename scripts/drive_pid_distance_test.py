@@ -79,6 +79,14 @@ class DriveConfig:
     left_gains: PidGains
     right_gains: PidGains
     pull_up: bool
+    left_motor_inverted: bool
+    right_motor_inverted: bool
+    left_encoder_inverted: bool
+    right_encoder_inverted: bool
+    brake_on_stop: bool
+    stall_seconds: float
+    stall_min_pwm: float
+    stall_min_rate: float
 
 
 @dataclass(frozen=True)
@@ -88,7 +96,7 @@ class WheelSample:
 
 
 class DriverMotor:
-    def __init__(self, pins: MotorPins) -> None:
+    def __init__(self, pins: MotorPins, inverted: bool, brake_on_stop: bool) -> None:
         try:
             from gpiozero import OutputDevice, PWMOutputDevice
         except ImportError as exc:
@@ -98,26 +106,42 @@ class DriverMotor:
         self._pwm = PWMOutputDevice(pins.pwm, frequency=1000, initial_value=0)
         self._in1 = OutputDevice(pins.in1, initial_value=False)
         self._in2 = OutputDevice(pins.in2, initial_value=False)
+        self._inverted = inverted
+        self._brake_on_stop = brake_on_stop
 
     def forward(self, duty: float) -> None:
-        self._in1.on()
-        self._in2.off()
+        if self._inverted:
+            self._in1.off()
+            self._in2.on()
+        else:
+            self._in1.on()
+            self._in2.off()
         self._pwm.value = clamp(duty, 0.0, 1.0)
 
     def stop(self) -> None:
+        if self._brake_on_stop:
+            self._in1.on()
+            self._in2.on()
+            self._pwm.value = 1
+        else:
+            self._pwm.value = 0
+            self._in1.off()
+            self._in2.off()
+
+    def coast(self) -> None:
         self._pwm.value = 0
         self._in1.off()
         self._in2.off()
 
     def close(self) -> None:
-        self.stop()
+        self.coast()
         self._pwm.close()
         self._in1.close()
         self._in2.close()
 
 
 class QuadratureEncoder:
-    def __init__(self, pins: EncoderPins, pull_up: bool) -> None:
+    def __init__(self, pins: EncoderPins, pull_up: bool, inverted: bool) -> None:
         try:
             from gpiozero import DigitalInputDevice
         except ImportError as exc:
@@ -129,6 +153,7 @@ class QuadratureEncoder:
         self._channel_b = DigitalInputDevice(pins.b, pull_up=pull_up)
         self._counts = 0
         self._bad_transitions = 0
+        self._multiplier = -1 if inverted else 1
         self._state = self._read_state()
 
         self._channel_a.when_activated = self._on_edge
@@ -169,14 +194,29 @@ class QuadratureEncoder:
             if delta is None:
                 self._bad_transitions += 1
             else:
-                self._counts += delta
+                self._counts += delta * self._multiplier
             self._state = current
 
 
 class Wheel:
-    def __init__(self, pins: WheelPins, pull_up: bool) -> None:
-        self.motor = DriverMotor(pins.motor)
-        self.encoder = QuadratureEncoder(pins.encoder, pull_up=pull_up)
+    def __init__(
+        self,
+        pins: WheelPins,
+        pull_up: bool,
+        motor_inverted: bool,
+        encoder_inverted: bool,
+        brake_on_stop: bool,
+    ) -> None:
+        self.motor = DriverMotor(
+            pins.motor,
+            inverted=motor_inverted,
+            brake_on_stop=brake_on_stop,
+        )
+        self.encoder = QuadratureEncoder(
+            pins.encoder,
+            pull_up=pull_up,
+            inverted=encoder_inverted,
+        )
 
     def close(self) -> None:
         self.motor.close()
@@ -191,8 +231,20 @@ class Rig:
             msg = "Install Raspberry Pi dependencies with: python -m pip install -e '.[rpi]'"
             raise RuntimeError(msg) from exc
 
-        self.left = Wheel(config.left, pull_up=config.pull_up)
-        self.right = Wheel(config.right, pull_up=config.pull_up)
+        self.left = Wheel(
+            config.left,
+            pull_up=config.pull_up,
+            motor_inverted=config.left_motor_inverted,
+            encoder_inverted=config.left_encoder_inverted,
+            brake_on_stop=config.brake_on_stop,
+        )
+        self.right = Wheel(
+            config.right,
+            pull_up=config.pull_up,
+            motor_inverted=config.right_motor_inverted,
+            encoder_inverted=config.right_encoder_inverted,
+            brake_on_stop=config.brake_on_stop,
+        )
         self._standby = OutputDevice(config.standby_pin, initial_value=False)
 
     def enable(self) -> None:
@@ -271,12 +323,22 @@ def run_drive(config: DriveConfig) -> None:
         previous_right = rig.right.encoder.sample()
         previous_time = monotonic()
         started_at = previous_time
+        left_stall_started_at: float | None = None
+        right_stall_started_at: float | None = None
 
         print(
             "Driving forward "
             f"{config.distance_mm:g} mm; target={target} counts; "
             f"counts/rev={wheel_counts_per_revolution(config):.1f}; "
             f"mm/count={mm_per_count(config):.4f}"
+        )
+        print(
+            "Options: "
+            f"left_motor_inverted={config.left_motor_inverted}, "
+            f"right_motor_inverted={config.right_motor_inverted}, "
+            f"left_encoder_inverted={config.left_encoder_inverted}, "
+            f"right_encoder_inverted={config.right_encoder_inverted}, "
+            f"brake_on_stop={config.brake_on_stop}"
         )
 
         while True:
@@ -322,8 +384,37 @@ def run_drive(config: DriveConfig) -> None:
                 config.max_pwm,
             )
 
-            rig.left.motor.forward(left_pwm)
-            rig.right.motor.forward(right_pwm)
+            left_should_move = left.abs_counts < target and left_pwm >= config.stall_min_pwm
+            right_should_move = right.abs_counts < target and right_pwm >= config.stall_min_pwm
+            left_is_stalled = left_should_move and left_rate < config.stall_min_rate
+            right_is_stalled = right_should_move and right_rate < config.stall_min_rate
+
+            if left_is_stalled:
+                left_stall_started_at = left_stall_started_at or now
+            else:
+                left_stall_started_at = None
+
+            if right_is_stalled:
+                right_stall_started_at = right_stall_started_at or now
+            else:
+                right_stall_started_at = None
+
+            if left_stall_started_at is not None and now - left_stall_started_at >= config.stall_seconds:
+                print("Aborting: left wheel appears stalled while PWM is applied.")
+                break
+            if right_stall_started_at is not None and now - right_stall_started_at >= config.stall_seconds:
+                print("Aborting: right wheel appears stalled while PWM is applied.")
+                break
+
+            if left.abs_counts >= target:
+                rig.left.motor.stop()
+            else:
+                rig.left.motor.forward(left_pwm)
+
+            if right.abs_counts >= target:
+                rig.right.motor.stop()
+            else:
+                rig.right.motor.forward(right_pwm)
 
             print(
                 f"t={elapsed:5.2f}s "
@@ -371,6 +462,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kd", type=float, default=0.0)
     parser.add_argument("--pull-up", dest="pull_up", action="store_true", default=True)
     parser.add_argument("--no-pull-up", dest="pull_up", action="store_false")
+    parser.add_argument("--left-motor-inverted", action="store_true")
+    parser.add_argument("--right-motor-inverted", action="store_true")
+    parser.add_argument("--left-encoder-inverted", action="store_true")
+    parser.add_argument("--right-encoder-inverted", action="store_true")
+    parser.add_argument("--brake-on-stop", dest="brake_on_stop", action="store_true", default=True)
+    parser.add_argument("--coast-on-stop", dest="brake_on_stop", action="store_false")
+    parser.add_argument("--stall-seconds", type=float, default=0.75)
+    parser.add_argument("--stall-min-pwm", type=float, default=0.25)
+    parser.add_argument("--stall-min-rate", type=float, default=3.0)
     parser.add_argument("--yes", action="store_true", help="Skip the safety confirmation prompt.")
     parser.add_argument("--left-pwm", type=int, default=13)
     parser.add_argument("--left-in1", type=int, default=26)
@@ -405,6 +505,12 @@ def build_config(args: argparse.Namespace) -> DriveConfig:
         raise ValueError("--timeout-seconds must be greater than zero")
     if args.slow_zone_mm <= 0:
         raise ValueError("--slow-zone-mm must be greater than zero")
+    if args.stall_seconds <= 0:
+        raise ValueError("--stall-seconds must be greater than zero")
+    if not 0 <= args.stall_min_pwm <= 1:
+        raise ValueError("--stall-min-pwm must be between 0.0 and 1.0")
+    if args.stall_min_rate < 0:
+        raise ValueError("--stall-min-rate cannot be negative")
 
     gains = PidGains(kp=args.kp, ki=args.ki, kd=args.kd)
     return DriveConfig(
@@ -431,6 +537,14 @@ def build_config(args: argparse.Namespace) -> DriveConfig:
         left_gains=gains,
         right_gains=gains,
         pull_up=args.pull_up,
+        left_motor_inverted=args.left_motor_inverted,
+        right_motor_inverted=args.right_motor_inverted,
+        left_encoder_inverted=args.left_encoder_inverted,
+        right_encoder_inverted=args.right_encoder_inverted,
+        brake_on_stop=args.brake_on_stop,
+        stall_seconds=args.stall_seconds,
+        stall_min_pwm=args.stall_min_pwm,
+        stall_min_rate=args.stall_min_rate,
     )
 
 
@@ -443,6 +557,7 @@ def confirm_or_exit(args: argparse.Namespace, config: DriveConfig) -> None:
     print(f"Wheel diameter: {config.wheel_diameter_mm:g} mm")
     print(f"Encoder: {config.pulses_per_channel} pulses/channel, gear ratio {config.gear_ratio:g}:1")
     print(f"Target counts per wheel: {target_counts(config)}")
+    print(f"Brake on stop: {config.brake_on_stop}")
     answer = input("Type RUN to start: ")
     if answer != "RUN":
         raise SystemExit("PID drive test cancelled.")
@@ -457,4 +572,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
