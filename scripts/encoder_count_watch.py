@@ -8,89 +8,9 @@ Spin the wheel by hand:
 from __future__ import annotations
 
 import argparse
-from threading import Lock
 from time import sleep
 
-
-QUADRATURE_DELTA = {
-    (0b00, 0b01): 1,
-    (0b01, 0b11): 1,
-    (0b11, 0b10): 1,
-    (0b10, 0b00): 1,
-    (0b00, 0b10): -1,
-    (0b10, 0b11): -1,
-    (0b11, 0b01): -1,
-    (0b01, 0b00): -1,
-}
-
-
-class Encoder:
-    def __init__(self, pin_a: int, pin_b: int, pull_up: bool, inverted: bool) -> None:
-        try:
-            import lgpio
-        except ImportError as exc:
-            msg = "Install Raspberry Pi dependencies with: python -m pip install -e '.[rpi]'"
-            raise RuntimeError(msg) from exc
-
-        self._lgpio = lgpio
-        self._lock = Lock()
-        self._chip = lgpio.gpiochip_open(0)
-        self._pin_a = pin_a
-        self._pin_b = pin_b
-        self._multiplier = -1 if inverted else 1
-        self._count = 0
-        self._bad = 0
-        self._edge_count = 0
-        self._last_tick_ns = 0
-
-        line_flags = lgpio.SET_PULL_UP if pull_up else 0
-        lgpio.gpio_claim_alert(self._chip, pin_a, lgpio.BOTH_EDGES, line_flags)
-        lgpio.gpio_claim_alert(self._chip, pin_b, lgpio.BOTH_EDGES, line_flags)
-
-        self._a_level = lgpio.gpio_read(self._chip, pin_a)
-        self._b_level = lgpio.gpio_read(self._chip, pin_b)
-        self._state = self._levels_to_state()
-
-        self._callback_a = lgpio.callback(self._chip, pin_a, lgpio.BOTH_EDGES, self._on_edge)
-        self._callback_b = lgpio.callback(self._chip, pin_b, lgpio.BOTH_EDGES, self._on_edge)
-
-    def close(self) -> None:
-        self._callback_a.cancel()
-        self._callback_b.cancel()
-        self._lgpio.gpio_free(self._chip, self._pin_a)
-        self._lgpio.gpio_free(self._chip, self._pin_b)
-        self._lgpio.gpiochip_close(self._chip)
-
-    def snapshot(self) -> tuple[int, int, int, int, int]:
-        with self._lock:
-            return self._count, self._bad, self._state, self._edge_count, self._last_tick_ns
-
-    def _levels_to_state(self) -> int:
-        return (int(self._a_level) << 1) | int(self._b_level)
-
-    def _on_edge(self, chip: int, gpio: int, level: int, tick_ns: int) -> None:
-        del chip
-        if level not in (0, 1):
-            return
-
-        with self._lock:
-            if gpio == self._pin_a:
-                self._a_level = level
-            elif gpio == self._pin_b:
-                self._b_level = level
-            else:
-                return
-
-            previous = self._state
-            current = self._levels_to_state()
-            delta = QUADRATURE_DELTA.get((previous, current))
-            if delta is None:
-                self._bad += 1
-            else:
-                self._count += delta * self._multiplier
-            self._state = current
-            self._edge_count += 1
-            self._last_tick_ns = tick_ns
+from navibot.robot.encoders import EncoderPins, QuadratureEncoder
 
 
 def parse_args() -> argparse.Namespace:
@@ -132,16 +52,22 @@ def resolve_encoder_args(args: argparse.Namespace) -> tuple[int, int, bool]:
 def main() -> None:
     args = parse_args()
     pin_a, pin_b, inverted = resolve_encoder_args(args)
-    encoder = Encoder(pin_a=pin_a, pin_b=pin_b, pull_up=args.pull_up, inverted=inverted)
+    encoder = QuadratureEncoder(
+        pins=EncoderPins(a=pin_a, b=pin_b),
+        pull_up=args.pull_up,
+        inverted=inverted,
+    )
     print(
         f"Watching encoder A=GPIO {pin_a}, B=GPIO {pin_b}, inverted={inverted}. "
         "Press Ctrl+C to stop."
     )
     try:
         while True:
-            count, bad, state, edges, tick_ns = encoder.snapshot()
+            sample = encoder.sample()
             print(
-                f"count={count:+d} edges={edges} bad={bad} state={state:02b} tick_ns={tick_ns}",
+                f"count={sample.counts:+d} edges={sample.edge_count} "
+                f"bad={sample.bad_transitions} state={sample.state:02b} "
+                f"tick_ns={sample.last_tick_ns}",
                 flush=True,
             )
             sleep(args.interval)

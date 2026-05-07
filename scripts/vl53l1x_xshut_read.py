@@ -13,33 +13,16 @@ all sensors off, enables them one at a time, then changes each address.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 from time import monotonic, sleep
 
-
-@dataclass(frozen=True)
-class SensorSpec:
-    name: str
-    xshut_gpio: int
-    address: int
-
-
-@dataclass(frozen=True)
-class SensorHandle:
-    spec: SensorSpec
-    xshut: object
-    sensor: object
-
-
-DEFAULT_SENSORS = (
-    SensorSpec(name="left45", xshut_gpio=25, address=0x30),
-    SensorSpec(name="front", xshut_gpio=8, address=0x31),
-    SensorSpec(name="right45", xshut_gpio=7, address=0x32),
-    SensorSpec(name="back", xshut_gpio=1, address=0x33),
+from navibot.sensors.vl53l1x_array import (
+    DEFAULT_VL53L1X_SPECS,
+    Vl53l1xArray,
+    Vl53l1xSpec,
 )
 
 
-def parse_sensor_spec(value: str) -> SensorSpec:
+def parse_sensor_spec(value: str) -> Vl53l1xSpec:
     parts = value.split(":")
     if len(parts) != 3:
         raise argparse.ArgumentTypeError("sensor spec must be name:xshut_gpio:i2c_address")
@@ -56,7 +39,7 @@ def parse_sensor_spec(value: str) -> SensorSpec:
 
     if not 0x08 <= address <= 0x77:
         raise argparse.ArgumentTypeError("I2C address must be between 0x08 and 0x77")
-    return SensorSpec(name=name, xshut_gpio=xshut_gpio, address=address)
+    return Vl53l1xSpec(name=name, xshut_gpio=xshut_gpio, address=address)
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,135 +66,52 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def get_board_pin(board: object, gpio: int) -> object:
-    pin_name = f"D{gpio}"
-    try:
-        return getattr(board, pin_name)
-    except AttributeError as exc:
-        raise RuntimeError(f"Board pin {pin_name} is not available in Blinka.") from exc
-
-
-def scan_i2c(i2c: object) -> list[int]:
-    if not i2c.try_lock():
-        return []
-    try:
-        return list(i2c.scan())
-    finally:
-        i2c.unlock()
-
-
-def configure_sensor(sensor: object, timing_budget_ms: int, distance_mode: str) -> None:
-    mode_value = 2 if distance_mode == "long" else 1
-    for attr, value in (
-        ("distance_mode", mode_value),
-        ("timing_budget", timing_budget_ms),
-    ):
-        if hasattr(sensor, attr):
-            try:
-                setattr(sensor, attr, value)
-            except Exception as exc:
-                print(f"warning: could not set {attr}={value}: {exc}")
-
-
-def bring_up_sensors(args: argparse.Namespace) -> tuple[object, list[SensorHandle]]:
-    try:
-        import adafruit_vl53l1x
-        import board
-        import digitalio
-    except ImportError as exc:
-        msg = (
-            "Install VL53L1X dependencies on the Pi with: "
-            "python3 -m pip install adafruit-blinka adafruit-circuitpython-vl53l1x"
-        )
-        raise RuntimeError(msg) from exc
-
-    specs = tuple(args.sensor or DEFAULT_SENSORS)
-    addresses = [spec.address for spec in specs]
-    if len(addresses) != len(set(addresses)):
-        raise ValueError("sensor I2C addresses must be unique")
-
-    xshut_pins = []
+def bring_up_sensors(args: argparse.Namespace) -> Vl53l1xArray:
+    specs = tuple(args.sensor or DEFAULT_VL53L1X_SPECS)
     for spec in specs:
-        xshut = digitalio.DigitalInOut(get_board_pin(board, spec.xshut_gpio))
-        xshut.switch_to_output(value=False)
-        xshut_pins.append(xshut)
-
-    sleep(args.boot_delay)
-    i2c = board.I2C()
-    handles: list[SensorHandle] = []
-
-    try:
-        for spec, xshut in zip(specs, xshut_pins, strict=True):
-            print(
-                f"Enabling {spec.name}: XSHUT GPIO {spec.xshut_gpio}, "
-                f"default 0x29 -> {hex(spec.address)}"
-            )
-            xshut.value = True
-            sleep(args.boot_delay)
-
-            sensor = adafruit_vl53l1x.VL53L1X(i2c)
-            sensor.set_address(spec.address)
-            configure_sensor(sensor, args.timing_budget_ms, args.distance_mode)
-            handles.append(SensorHandle(spec=spec, xshut=xshut, sensor=sensor))
-
-        print("I2C scan:", ", ".join(hex(address) for address in scan_i2c(i2c)))
-        for handle in handles:
-            handle.sensor.start_ranging()
-        return i2c, handles
-    except Exception:
-        for xshut in xshut_pins:
-            xshut.value = False
-            xshut.deinit()
-        raise
+        print(
+            f"Enabling {spec.name}: XSHUT GPIO {spec.xshut_gpio}, "
+            f"default 0x29 -> {hex(spec.address)}"
+        )
+    sensor_array = Vl53l1xArray(
+        specs=specs,
+        boot_delay=args.boot_delay,
+        timing_budget_ms=args.timing_budget_ms,
+        distance_mode=args.distance_mode,
+    )
+    print("I2C scan:", ", ".join(hex(address) for address in sensor_array.scan_i2c()))
+    sensor_array.start_ranging()
+    return sensor_array
 
 
-def print_readings(handles: list[SensorHandle], interval: float, count: int) -> None:
+def print_readings(sensor_array: Vl53l1xArray, interval: float, count: int) -> None:
     sample = 0
     started_at = monotonic()
     while count <= 0 or sample < count:
         fields = [f"t={monotonic() - started_at:7.2f}s"]
-        for handle in handles:
-            sensor = handle.sensor
-            if sensor.data_ready:
-                distance_cm = sensor.distance
-                sensor.clear_interrupt()
-                if distance_cm is None:
-                    fields.append(f"{handle.spec.name}=----")
+        for reading in sensor_array.read_all():
+            if reading.ready:
+                if reading.distance_mm is None:
+                    fields.append(f"{reading.name}=----")
                 else:
-                    fields.append(f"{handle.spec.name}={distance_cm * 10:5.0f}mm")
+                    fields.append(f"{reading.name}={reading.distance_mm:5d}mm")
             else:
-                fields.append(f"{handle.spec.name}=wait")
+                fields.append(f"{reading.name}=wait")
         print("  ".join(fields), flush=True)
         sample += 1
         sleep(interval)
 
 
-def shutdown(handles: list[SensorHandle]) -> None:
-    for handle in handles:
-        try:
-            handle.sensor.stop_ranging()
-        except Exception:
-            pass
-
-    for handle in handles:
-        try:
-            handle.xshut.value = False
-            handle.xshut.deinit()
-        except Exception:
-            pass
-
-
 def main() -> None:
     args = parse_args()
-    _, handles = bring_up_sensors(args)
+    sensor_array = bring_up_sensors(args)
     try:
-        print_readings(handles, interval=args.interval, count=args.count)
+        print_readings(sensor_array, interval=args.interval, count=args.count)
     except KeyboardInterrupt:
         print("")
     finally:
-        shutdown(handles)
+        sensor_array.close()
 
 
 if __name__ == "__main__":
     main()
-

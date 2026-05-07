@@ -21,12 +21,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from time import sleep
 
-
-@dataclass(frozen=True)
-class MotorPins:
-    pwm: int
-    in1: int
-    in2: int
+from navibot.robot.motors import DifferentialDrive, DriverMotor, MotorPins, validate_motor_voltage
 
 
 @dataclass(frozen=True)
@@ -40,90 +35,6 @@ class DriveConfig:
     motor_voltage_limit: float
     left_motor_inverted: bool
     right_motor_inverted: bool
-
-
-class DriverMotor:
-    def __init__(self, pins: MotorPins, inverted: bool) -> None:
-        try:
-            from gpiozero import OutputDevice, PWMOutputDevice
-        except ImportError as exc:
-            msg = "Install Raspberry Pi dependencies with: python -m pip install -e '.[rpi]'"
-            raise RuntimeError(msg) from exc
-
-        self._pwm = PWMOutputDevice(pins.pwm, frequency=1000, initial_value=0)
-        self._in1 = OutputDevice(pins.in1, initial_value=False)
-        self._in2 = OutputDevice(pins.in2, initial_value=False)
-        self._inverted = inverted
-
-    def forward(self, speed: float) -> None:
-        self._drive(speed, forward=True)
-
-    def reverse(self, speed: float) -> None:
-        self._drive(speed, forward=False)
-
-    def stop(self) -> None:
-        self._pwm.value = 0
-        self._in1.off()
-        self._in2.off()
-
-    def close(self) -> None:
-        self.stop()
-        self._pwm.close()
-        self._in1.close()
-        self._in2.close()
-
-    def _drive(self, speed: float, forward: bool) -> None:
-        effective_forward = not forward if self._inverted else forward
-        if effective_forward:
-            self._in1.on()
-            self._in2.off()
-        else:
-            self._in1.off()
-            self._in2.on()
-        self._pwm.value = speed
-
-
-class DriveRig:
-    def __init__(self, config: DriveConfig) -> None:
-        try:
-            from gpiozero import OutputDevice
-        except ImportError as exc:
-            msg = "Install Raspberry Pi dependencies with: python -m pip install -e '.[rpi]'"
-            raise RuntimeError(msg) from exc
-
-        self.left = DriverMotor(config.left, inverted=config.left_motor_inverted)
-        self.right = DriverMotor(config.right, inverted=config.right_motor_inverted)
-        self._standby = OutputDevice(config.standby_pin, initial_value=False)
-
-    def enable(self) -> None:
-        self._standby.on()
-
-    def forward(self, speed: float) -> None:
-        self.left.forward(speed)
-        self.right.forward(speed)
-
-    def reverse(self, speed: float) -> None:
-        self.left.reverse(speed)
-        self.right.reverse(speed)
-
-    def rotate_left(self, speed: float) -> None:
-        self.left.reverse(speed)
-        self.right.forward(speed)
-
-    def rotate_right(self, speed: float) -> None:
-        self.left.forward(speed)
-        self.right.reverse(speed)
-
-    def stop(self) -> None:
-        self.left.stop()
-        self.right.stop()
-
-    def close(self) -> None:
-        self.stop()
-        self._standby.off()
-        self.left.close()
-        self.right.close()
-        self._standby.close()
 
 
 @contextmanager
@@ -148,7 +59,11 @@ def read_key(timeout_seconds: float) -> str | None:
 
 
 def run_teleop(config: DriveConfig) -> None:
-    rig = DriveRig(config)
+    rig = DifferentialDrive(
+        left=DriverMotor(config.left, inverted=config.left_motor_inverted),
+        right=DriverMotor(config.right, inverted=config.right_motor_inverted),
+        standby_pin=config.standby_pin,
+    )
     try:
         rig.enable()
         print("WASD drive test ready. W/S/A/D move, Space stops, Q quits.")
@@ -180,7 +95,7 @@ def run_teleop(config: DriveConfig) -> None:
         rig.close()
 
 
-def dispatch_key(rig: DriveRig, key: str, speed: float) -> str | None:
+def dispatch_key(rig: DifferentialDrive, key: str, speed: float) -> str | None:
     if key == "w":
         rig.forward(speed)
         return "forward"
@@ -224,13 +139,7 @@ def build_config(args: argparse.Namespace) -> DriveConfig:
         raise ValueError("--supply-voltage must be greater than zero")
     if args.motor_voltage_limit <= 0:
         raise ValueError("--motor-voltage-limit must be greater than zero")
-    if args.speed * args.supply_voltage > args.motor_voltage_limit:
-        raise ValueError(
-            "--speed would exceed the motor voltage limit: "
-            f"{args.speed:.3f} * {args.supply_voltage:g}V = "
-            f"{args.speed * args.supply_voltage:.2f}V, "
-            f"limit is {args.motor_voltage_limit:g}V"
-        )
+    validate_motor_voltage(args.speed, args.supply_voltage, args.motor_voltage_limit)
 
     return DriveConfig(
         left=MotorPins(pwm=args.left_pwm, in1=args.left_in1, in2=args.left_in2),
