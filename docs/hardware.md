@@ -83,7 +83,7 @@ Current encoder wiring maps left encoder to GPIO 23/24 and right encoder to GPIO
 
 ## Encoder Performance
 
-`scripts/encoder_count_watch.py` uses direct `lgpio` alert callbacks for manual encoder checks. The older motor/PID test scripts still use GPIO Zero wrappers and should be migrated to the same lower-level counter path before relying on odometry.
+`scripts/encoder_count_watch.py` and `scripts/drive_pid_distance_test.py` use direct `lgpio` alert callbacks for encoder checks and PID distance testing. Older diagnostic scripts still using GPIO Zero wrappers should be migrated to the same lower-level counter path before relying on odometry.
 
 Direct `lgpio` callbacks are better than GPIO Zero device callbacks for encoder counting, but Raspberry Pi Linux userspace is still not real-time. At higher wheel speeds, Python callbacks can miss quadrature edges, especially while also running motor control, networking, camera, or web-server work.
 
