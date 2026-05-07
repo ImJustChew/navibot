@@ -72,6 +72,8 @@ class DriveConfig:
     target_speed_mm_s: float
     min_pwm: float
     max_pwm: float
+    supply_voltage: float
+    motor_voltage_limit: float
     loop_seconds: float
     timeout_seconds: float
     slow_zone_mm: float
@@ -363,6 +365,13 @@ def run_drive(config: DriveConfig) -> None:
             f"mm/count={mm_per_count(config):.4f}"
         )
         print(
+            "Voltage limit: "
+            f"supply={config.supply_voltage:g}V, "
+            f"motor_limit={config.motor_voltage_limit:g}V, "
+            f"max_pwm={config.max_pwm:.3f}, "
+            f"effective_max={config.max_pwm * config.supply_voltage:.2f}V"
+        )
+        print(
             "Options: "
             f"left_motor_inverted={config.left_motor_inverted}, "
             f"right_motor_inverted={config.right_motor_inverted}, "
@@ -500,6 +509,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-speed-mm-s", type=float, default=80.0)
     parser.add_argument("--min-pwm", type=float, default=0.18)
     parser.add_argument("--max-pwm", type=float, default=0.45)
+    parser.add_argument("--supply-voltage", type=float, default=7.4)
+    parser.add_argument("--motor-voltage-limit", type=float, default=6.0)
     parser.add_argument("--loop-seconds", type=float, default=0.05)
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     parser.add_argument("--slow-zone-mm", type=float, default=80.0)
@@ -554,6 +565,19 @@ def build_config(args: argparse.Namespace) -> DriveConfig:
         raise ValueError("--target-speed-mm-s must be greater than zero")
     if not 0 <= args.min_pwm <= args.max_pwm <= 1:
         raise ValueError("--min-pwm and --max-pwm must satisfy 0 <= min <= max <= 1")
+    if args.supply_voltage <= 0:
+        raise ValueError("--supply-voltage must be greater than zero")
+    if args.motor_voltage_limit <= 0:
+        raise ValueError("--motor-voltage-limit must be greater than zero")
+    voltage_limited_max_pwm = args.motor_voltage_limit / args.supply_voltage
+    if args.max_pwm > voltage_limited_max_pwm:
+        raise ValueError(
+            "--max-pwm would exceed the motor voltage limit: "
+            f"{args.max_pwm:.3f} * {args.supply_voltage:g}V = "
+            f"{args.max_pwm * args.supply_voltage:.2f}V, "
+            f"limit is {args.motor_voltage_limit:g}V "
+            f"(max allowed PWM {voltage_limited_max_pwm:.3f})"
+        )
     if args.loop_seconds <= 0:
         raise ValueError("--loop-seconds must be greater than zero")
     if args.timeout_seconds <= 0:
@@ -587,6 +611,8 @@ def build_config(args: argparse.Namespace) -> DriveConfig:
         target_speed_mm_s=args.target_speed_mm_s,
         min_pwm=args.min_pwm,
         max_pwm=args.max_pwm,
+        supply_voltage=args.supply_voltage,
+        motor_voltage_limit=args.motor_voltage_limit,
         loop_seconds=args.loop_seconds,
         timeout_seconds=args.timeout_seconds,
         slow_zone_mm=args.slow_zone_mm,
@@ -614,6 +640,10 @@ def confirm_or_exit(args: argparse.Namespace, config: DriveConfig) -> None:
     print(f"Distance: {config.distance_mm:g} mm")
     print(f"Wheel diameter: {config.wheel_diameter_mm:g} mm")
     print(f"Encoder: {config.pulses_per_channel} pulses/channel, gear ratio {config.gear_ratio:g}:1")
+    print(
+        f"Motor voltage cap: {config.max_pwm:.3f} PWM * "
+        f"{config.supply_voltage:g}V = {config.max_pwm * config.supply_voltage:.2f}V"
+    )
     print(f"Target counts per wheel: {target_counts(config)}")
     print(f"Brake on stop: {config.brake_on_stop}")
     answer = input("Type RUN to start: ")

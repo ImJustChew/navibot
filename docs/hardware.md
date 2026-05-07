@@ -81,6 +81,22 @@ The PID script lets an ahead wheel coast before target and aborts if left/right 
 
 Current encoder wiring maps left encoder to GPIO 23/24 and right encoder to GPIO 27/22. The right encoder direction is inverted in software.
 
+The GA12-N20 motors are rated for 6 V max. With a 7.4 V supply, keep commanded drive PWM at or below:
+
+```text
+6.0V / 7.4V = 0.811 PWM
+```
+
+`scripts/drive_pid_distance_test.py` enforces this with `--supply-voltage` and `--motor-voltage-limit`. For early testing, stay much lower than the absolute cap, such as `--max-pwm 0.28`.
+
+PID tuning notes:
+
+- If the log shows both motors at `min_pwm` most of the run, PID is saturated at the floor. Lower `--min-pwm` until the robot just barely moves reliably, then set it slightly above that.
+- If the robot oscillates left/right, lower `--sync-gain`.
+- If one side drifts away slowly, raise `--sync-gain` a little.
+- If speed overshoots the target speed, lower `--kp` or lower `--min-pwm`.
+- Tune with short distances first, such as 100-200 mm, before increasing speed or distance.
+
 ## Encoder Performance
 
 `scripts/encoder_count_watch.py` and `scripts/drive_pid_distance_test.py` use direct `lgpio` alert callbacks for encoder checks and PID distance testing. Older diagnostic scripts still using GPIO Zero wrappers should be migrated to the same lower-level counter path before relying on odometry.
