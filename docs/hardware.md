@@ -40,6 +40,12 @@ python3 scripts/ina219_read.py
 
 The script prints bus voltage, shunt voltage, estimated load voltage, current, and power.
 
+Observed baseline behavior:
+
+- Normal robot draw is positive current. In one idle/running sample, the bus was about `6.48 V`, current was about `+0.44 A`, and power was about `2.85 W`.
+- Charging or backfeed appears as negative current. In one charging sample, the bus was about `7.01 V`, current was about `-1.10 A`, and power magnitude was about `7.8 W`.
+- Treat the current sign as directional: positive means battery/output supplying the robot load, negative means current flowing back through the sensor toward the battery/charger side.
+
 ## Wheels And Encoders
 
 - Wheel: D-shaped shaft rubber tire accessory model, color option `43MM轮子一个`.
