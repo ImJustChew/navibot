@@ -38,6 +38,16 @@ python -m pip install -e ".[rpi]"
 python scripts/motor_smoke_test.py
 ```
 
+## WASD Drive Test
+
+For interactive console control on the Raspberry Pi:
+
+```bash
+python3 scripts/wasd_drive_test.py --speed 0.18 --pulse-seconds 0.15
+```
+
+Controls are `W` forward, `S` reverse, `A` rotate left, `D` rotate right, space stop, and `Q` quit. Each keypress moves for a short pulse and then stops unless more keys are pressed.
+
 ## Encoder Motor Accuracy Test
 
 The encoder-paired movement test is `scripts/encoder_motor_accuracy_test.py`. It drives each wheel forward and reverse until the paired encoder reaches a target count.
