@@ -9,6 +9,25 @@
 
 Record exact sensor model, I2C addresses, GPIO pins, power budget, and mounting offsets here before implementing drivers.
 
+## TOF Sensor Bring-Up
+
+The four VL53L1X sensors share I2C1 and use XSHUT pins so each can be assigned a unique address at boot.
+
+Default mapping:
+
+- `left45`: XSHUT GPIO 25, I2C `0x30`
+- `front`: XSHUT GPIO 8, I2C `0x31`
+- `right45`: XSHUT GPIO 7, I2C `0x32`
+- `back`: XSHUT GPIO 1, I2C `0x33`
+
+Run:
+
+```bash
+python3 scripts/vl53l1x_xshut_read.py
+```
+
+Override mappings with repeated `--sensor name:xshut_gpio:i2c_address` arguments.
+
 ## Wheels And Encoders
 
 - Wheel: D-shaped shaft rubber tire accessory model, color option `43MM轮子一个`.

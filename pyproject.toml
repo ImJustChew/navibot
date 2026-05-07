@@ -23,6 +23,8 @@ vision = [
   "numpy>=1.26",
 ]
 rpi = [
+  "adafruit-blinka>=8.0",
+  "adafruit-circuitpython-vl53l1x>=3.0",
   "gpiozero>=2.0",
   "lgpio>=0.2",
 ]
@@ -52,4 +54,3 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.11"
 strict = true
 warn_unused_configs = true
-

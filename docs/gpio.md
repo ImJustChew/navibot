@@ -15,3 +15,15 @@ IN2: GPIO 21
 RIGHT ENCODER DIRECTION: inverted
 
 STBY: 16
+
+VL53L1X I2C ADDRESS: 0x29 (default) but changed at boot to 0x30, 0x31, 0x32, 0x33 with XSHUT pins
+
+INA 219 CURRENT SENSOR
+0x40 (default)
+All I2C devices connected to I2C1 bus (GPIO 2 and GPIO 3)
+
+4 TOF Sensors VL53L1X XSHUT pins
+45deg LEFT: GPIO 25 -> 0x30
+FRONT: GPIO 8 -> 0x31
+45deg RIGHT: GPIO 7 -> 0x32
+BACK: GPIO 1 -> 0x33
