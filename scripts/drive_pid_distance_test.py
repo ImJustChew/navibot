@@ -87,6 +87,7 @@ class DriveConfig:
     stall_seconds: float
     stall_min_pwm: float
     stall_min_rate: float
+    max_skew_counts: int
 
 
 @dataclass(frozen=True)
@@ -361,6 +362,12 @@ def run_drive(config: DriveConfig) -> None:
             if elapsed >= config.timeout_seconds:
                 print("Timed out before target distance.")
                 break
+            if abs(left.abs_counts - right.abs_counts) >= config.max_skew_counts:
+                print(
+                    "Aborting: wheel encoder skew exceeded limit "
+                    f"({abs(left.abs_counts - right.abs_counts)} >= {config.max_skew_counts})."
+                )
+                break
 
             target_rate = scaled_target_rate(config, remaining)
             sync_error = left.abs_counts - right.abs_counts
@@ -377,12 +384,19 @@ def run_drive(config: DriveConfig) -> None:
             if right.abs_counts >= target:
                 right_pwm = 0.0
 
-            left_pwm = clamp(left_pwm, 0.0 if left.abs_counts >= target else config.min_pwm, config.max_pwm)
-            right_pwm = clamp(
-                right_pwm,
-                0.0 if right.abs_counts >= target else config.min_pwm,
-                config.max_pwm,
+            skew_deadband_counts = 20
+            left_low_pwm = (
+                0.0
+                if left.abs_counts >= target or left.abs_counts > right.abs_counts + skew_deadband_counts
+                else config.min_pwm
             )
+            right_low_pwm = (
+                0.0
+                if right.abs_counts >= target or right.abs_counts > left.abs_counts + skew_deadband_counts
+                else config.min_pwm
+            )
+            left_pwm = clamp(left_pwm, left_low_pwm, config.max_pwm)
+            right_pwm = clamp(right_pwm, right_low_pwm, config.max_pwm)
 
             left_should_move = left.abs_counts < target and left_pwm >= config.stall_min_pwm
             right_should_move = right.abs_counts < target and right_pwm >= config.stall_min_pwm
@@ -408,11 +422,15 @@ def run_drive(config: DriveConfig) -> None:
 
             if left.abs_counts >= target:
                 rig.left.motor.stop()
+            elif left_pwm <= 0:
+                rig.left.motor.coast()
             else:
                 rig.left.motor.forward(left_pwm)
 
             if right.abs_counts >= target:
                 rig.right.motor.stop()
+            elif right_pwm <= 0:
+                rig.right.motor.coast()
             else:
                 rig.right.motor.forward(right_pwm)
 
@@ -472,6 +490,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stall-seconds", type=float, default=0.75)
     parser.add_argument("--stall-min-pwm", type=float, default=0.25)
     parser.add_argument("--stall-min-rate", type=float, default=3.0)
+    parser.add_argument("--max-skew-counts", type=int, default=350)
     parser.add_argument("--yes", action="store_true", help="Skip the safety confirmation prompt.")
     parser.add_argument("--left-pwm", type=int, default=13)
     parser.add_argument("--left-in1", type=int, default=26)
@@ -512,6 +531,8 @@ def build_config(args: argparse.Namespace) -> DriveConfig:
         raise ValueError("--stall-min-pwm must be between 0.0 and 1.0")
     if args.stall_min_rate < 0:
         raise ValueError("--stall-min-rate cannot be negative")
+    if args.max_skew_counts <= 0:
+        raise ValueError("--max-skew-counts must be greater than zero")
 
     gains = PidGains(kp=args.kp, ki=args.ki, kd=args.kd)
     return DriveConfig(
@@ -546,6 +567,7 @@ def build_config(args: argparse.Namespace) -> DriveConfig:
         stall_seconds=args.stall_seconds,
         stall_min_pwm=args.stall_min_pwm,
         stall_min_rate=args.stall_min_rate,
+        max_skew_counts=args.max_skew_counts,
     )
 
 

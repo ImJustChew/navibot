@@ -76,6 +76,8 @@ The script brakes a wheel when it reaches target. To test motor-driver behavior 
 
 Current chassis wiring requires the left motor to be inverted for forward motion. `scripts/drive_pid_distance_test.py` defaults to left motor inverted; use `--left-motor-normal` only if the wiring changes.
 
+The PID script lets an ahead wheel coast before target and aborts if left/right encoder counts diverge too far. Tune that guard with `--max-skew-counts`.
+
 ## Docking
 
 Docking is expected to use a camera-visible fiducial marker, likely ArUco or AprilTag. Record camera model, marker size, marker family, and dock geometry before implementing pose estimation.
