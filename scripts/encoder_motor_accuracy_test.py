@@ -428,18 +428,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--left-motor-normal", dest="left_motor_inverted", action="store_false")
     parser.add_argument("--right-motor-inverted", action="store_true")
     parser.add_argument("--left-encoder-inverted", action="store_true")
-    parser.add_argument("--right-encoder-inverted", action="store_true")
+    parser.add_argument(
+        "--right-encoder-inverted",
+        dest="right_encoder_inverted",
+        action="store_true",
+        default=True,
+    )
+    parser.add_argument("--right-encoder-normal", dest="right_encoder_inverted", action="store_false")
     parser.add_argument("--yes", action="store_true", help="Skip the safety confirmation prompt.")
     parser.add_argument("--left-pwm", type=int, default=13)
     parser.add_argument("--left-in1", type=int, default=26)
     parser.add_argument("--left-in2", type=int, default=19)
-    parser.add_argument("--left-encoder-a", type=int, default=27)
-    parser.add_argument("--left-encoder-b", type=int, default=22)
+    parser.add_argument("--left-encoder-a", type=int, default=23)
+    parser.add_argument("--left-encoder-b", type=int, default=24)
     parser.add_argument("--right-pwm", type=int, default=12)
     parser.add_argument("--right-in1", type=int, default=20)
     parser.add_argument("--right-in2", type=int, default=21)
-    parser.add_argument("--right-encoder-a", type=int, default=23)
-    parser.add_argument("--right-encoder-b", type=int, default=24)
+    parser.add_argument("--right-encoder-a", type=int, default=27)
+    parser.add_argument("--right-encoder-b", type=int, default=22)
     parser.add_argument("--standby", type=int, default=16)
     return parser.parse_args()
 
