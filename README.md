@@ -52,3 +52,34 @@ Use `--yes` to skip the confirmation prompt after you trust the setup:
 ```bash
 python scripts/motor_smoke_test.py --speed 0.25 --step-seconds 1 --yes
 ```
+
+Interactive WASD drive:
+
+```bash
+python3 scripts/wasd_drive_test.py --speed 0.18 --pulse-seconds 0.15
+```
+
+Encoder count watchers:
+
+```bash
+python3 scripts/encoder_count_watch.py --wheel left
+python3 scripts/encoder_count_watch.py --wheel right
+```
+
+PID distance drive:
+
+```bash
+python3 scripts/drive_pid_distance_test.py --distance-mm 200 --gear-ratio 105.6 --target-speed-mm-s 50 --min-pwm 0.12 --max-pwm 0.28 --yes
+```
+
+VL53L1X TOF sensors:
+
+```bash
+python3 scripts/vl53l1x_xshut_read.py
+```
+
+INA219 current sensor:
+
+```bash
+python3 scripts/ina219_read.py
+```
