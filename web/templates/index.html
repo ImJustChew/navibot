@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Navibot Control</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="status">
+        <h1>Navibot</h1>
+        <p id="connection-state">Disconnected</p>
+      </section>
+
+      <section class="controls" aria-label="Robot controls">
+        <button type="button" data-command="forward">Forward</button>
+        <button type="button" data-command="left">Left</button>
+        <button type="button" data-command="stop">Stop</button>
+        <button type="button" data-command="right">Right</button>
+        <button type="button" data-command="reverse">Reverse</button>
+      </section>
+    </main>
+    <script src="/static/js/app.js" type="module"></script>
+  </body>
+</html>
+

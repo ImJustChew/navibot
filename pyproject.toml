@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "navibot"
+version = "0.1.0"
+description = "Raspberry Pi robot navigation, docking, and encrypted web control."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+server = [
+  "fastapi>=0.111",
+  "uvicorn[standard]>=0.30",
+  "websockets>=12",
+]
+vision = [
+  "opencv-python>=4.9",
+  "numpy>=1.26",
+]
+rpi = [
+  "gpiozero>=2.0",
+  "lgpio>=0.2",
+]
+dev = [
+  "pytest>=8.2",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+  "mypy>=1.10",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+
