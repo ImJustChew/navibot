@@ -33,3 +33,22 @@ python -m apps.robot
 python -m apps.webserver
 ```
 
+## Raspberry Pi Hardware Tests
+
+Install Pi GPIO dependencies on the Raspberry Pi:
+
+```bash
+python -m pip install -e ".[rpi]"
+```
+
+Lift the robot so the wheels cannot drive away, then run the motor smoke test:
+
+```bash
+python scripts/motor_smoke_test.py
+```
+
+Use `--yes` to skip the confirmation prompt after you trust the setup:
+
+```bash
+python scripts/motor_smoke_test.py --speed 0.25 --step-seconds 1 --yes
+```
