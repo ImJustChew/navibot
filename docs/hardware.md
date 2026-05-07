@@ -74,6 +74,8 @@ If one wheel runs backward relative to the other, add `--left-motor-inverted` or
 
 The script brakes a wheel when it reaches target. To test motor-driver behavior without active braking, use `--coast-on-stop`.
 
+Current chassis wiring requires the left motor to be inverted for forward motion. `scripts/drive_pid_distance_test.py` defaults to left motor inverted; use `--left-motor-normal` only if the wiring changes.
+
 ## Docking
 
 Docking is expected to use a camera-visible fiducial marker, likely ArUco or AprilTag. Record camera model, marker size, marker family, and dock geometry before implementing pose estimation.
