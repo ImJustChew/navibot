@@ -108,6 +108,7 @@ class OccupancyGrid:
         self.cell_size_mm = cell_size_mm
         self.free: set[tuple[int, int]] = set()
         self.occupied: set[tuple[int, int]] = set()
+        self.penalized: set[tuple[int, int]] = set()
 
     def mark_free(self, x_mm: float, y_mm: float) -> bool:
         cell = self.to_cell(x_mm, y_mm)
@@ -123,6 +124,9 @@ class OccupancyGrid:
         self.occupied.add(cell)
         return True
 
+    def mark_penalized(self, x_mm: float, y_mm: float) -> None:
+        self.penalized.add(self.to_cell(x_mm, y_mm))
+
     def to_cell(self, x_mm: float, y_mm: float) -> tuple[int, int]:
         return (math.floor(x_mm / self.cell_size_mm), math.floor(y_mm / self.cell_size_mm))
 
@@ -131,6 +135,7 @@ class OccupancyGrid:
             "cell_size_mm": self.cell_size_mm,
             "free": [[x, y] for x, y in sorted(self.free)],
             "occupied": [[x, y] for x, y in sorted(self.occupied)],
+            "penalized": [[x, y] for x, y in sorted(self.penalized)],
         }
 
 
