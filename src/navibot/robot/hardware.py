@@ -5,6 +5,7 @@ from navibot.robot.encoders import EncoderPins, QuadratureEncoder
 from navibot.robot.pose import DifferentialOdometry, DifferentialOdometryConfig
 from navibot.robot.safety import SafetyConfig, evaluate_safety
 from navibot.robot.state import EncoderState, PoseState, RobotState
+from navibot.sensors.battery import BatteryMonitor
 from navibot.sensors.ina219 import Ina219Sensor
 from navibot.sensors.vl53l1x_array import DEFAULT_VL53L1X_SPECS, Vl53l1xArray
 
@@ -36,7 +37,7 @@ class RobotHardware:
             inverted=config.right_encoder_inverted,
         )
         self.tof = Vl53l1xArray(specs=DEFAULT_VL53L1X_SPECS)
-        self.power = Ina219Sensor(address=config.ina219_address)
+        self.battery = BatteryMonitor(sensor=Ina219Sensor(address=config.ina219_address))
         self.odometry = DifferentialOdometry(config.odometry)
 
     def start(self) -> None:
@@ -49,7 +50,8 @@ class RobotHardware:
         left = self.left_encoder.sample()
         right = self.right_encoder.sample()
         pose = self.odometry.update(left, right)
-        power = self.power.read()
+        battery = self.battery.read()
+        power = battery.power
         tof = {reading.name: reading.distance_mm for reading in self.tof.read_all()}
         safety = evaluate_safety(
             front_mm=tof.get("front"),
@@ -60,6 +62,7 @@ class RobotHardware:
         return RobotState(
             t_s=monotonic() - self._started_at,
             power=power,
+            battery=battery,
             tof_mm=tof,
             encoders=EncoderState(
                 left_counts=left.counts,
@@ -80,4 +83,3 @@ class RobotHardware:
         self.left_encoder.close()
         self.right_encoder.close()
         self.tof.close()
-

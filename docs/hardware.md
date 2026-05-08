@@ -58,6 +58,26 @@ python3 scripts/ina219_read.py
 
 The script prints bus voltage, shunt voltage, estimated load voltage, current, and power.
 
+Continuous battery guard:
+
+```bash
+python3 scripts/battery_guard.py
+```
+
+By default the guard powers off the Raspberry Pi after sustained critical voltage. This is intentional battery protection. Use `--dry-run` only when testing thresholds:
+
+```bash
+python3 scripts/battery_guard.py --dry-run
+```
+
+Recommended service command:
+
+```bash
+python3 scripts/battery_guard.py --critical-voltage 6.2 --critical-seconds 30
+```
+
+The guard ignores low voltage while the INA219 reports negative current, because that indicates charging/backfeed. The same `BatteryMonitor` subsystem is used by the robot status loop.
+
 Observed baseline behavior:
 
 - Normal robot draw is positive current. In one idle/running sample, the bus was about `6.48 V`, current was about `+0.44 A`, and power was about `2.85 W`.

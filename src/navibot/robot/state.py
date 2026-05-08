@@ -2,6 +2,7 @@ from dataclasses import asdict, dataclass
 import json
 
 from navibot.robot.safety import SafetyState
+from navibot.sensors.battery import BatteryStatus
 from navibot.sensors.ina219 import PowerReading
 
 
@@ -25,6 +26,7 @@ class PoseState:
 class RobotState:
     t_s: float
     power: PowerReading
+    battery: BatteryStatus
     tof_mm: dict[str, int | None]
     encoders: EncoderState
     pose: PoseState
@@ -35,4 +37,3 @@ class RobotState:
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), separators=(",", ":"))
-

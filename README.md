@@ -84,6 +84,14 @@ INA219 current sensor:
 python3 scripts/ina219_read.py
 ```
 
+Battery guard:
+
+```bash
+python3 scripts/battery_guard.py
+```
+
+Use `--dry-run` only for threshold testing; the default behavior powers off on sustained critical battery voltage.
+
 Unified robot status:
 
 ```bash
