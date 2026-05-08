@@ -786,6 +786,7 @@ def write_outputs(
             "map_points": len(points),
             "free_cells": len(grid.free),
             "occupied_cells": len(grid.occupied),
+            "penalized_cells": len(grid.penalized),
             "config": {
                 key: str(value) if isinstance(value, Path) else value
                 for key, value in asdict(config).items()
@@ -838,6 +839,7 @@ def render_html(payload: dict[str, object]) -> str:
       <div class="legend">
         <div class="item"><span class="swatch" style="background:#26323a"></span>free grid</div>
         <div class="item"><span class="swatch" style="background:#f05d4f"></span>TOF hit / occupied</div>
+        <div class="item"><span class="swatch" style="background:#b26bff"></span>penalized (dead end)</div>
         <div class="item"><span class="swatch" style="background:#56a6ff"></span>robot path</div>
         <div class="item"><span class="swatch" style="background:#f3d36b"></span>robot final pose</div>
       </div>
@@ -855,6 +857,7 @@ def render_html(payload: dict[str, object]) -> str:
       path_samples: meta.path_samples,
       free_cells: meta.free_cells,
       occupied_cells: meta.occupied_cells,
+      penalized_cells: meta.penalized_cells || 0,
       cell_size_mm: data.grid.cell_size_mm
     }})) {{
       const dt = document.createElement("dt");
@@ -902,6 +905,12 @@ def render_html(payload: dict[str, object]) -> str:
 
       ctx.fillStyle = "#f05d4f";
       for (const [cx, cy] of data.grid.occupied) {{
+        const [x, y] = xy(cx * data.grid.cell_size_mm, cy * data.grid.cell_size_mm);
+        ctx.fillRect(x, y - cell, cell, cell);
+      }}
+
+      ctx.fillStyle = "#b26bff";
+      for (const [cx, cy] of (data.grid.penalized || [])) {{
         const [x, y] = xy(cx * data.grid.cell_size_mm, cy * data.grid.cell_size_mm);
         ctx.fillRect(x, y - cell, cell, cell);
       }}
