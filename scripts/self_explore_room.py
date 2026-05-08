@@ -86,6 +86,19 @@ class ExploreConfig:
     left_encoder_inverted: bool
     right_encoder_inverted: bool
     pull_up: bool
+    stall_detect_min_pwm: float
+    stall_min_counts_per_step: int
+    stall_threshold_steps: int
+    dead_end_side_mm: int
+    min_reverse_mm: float
+    back_obstacle_mm: int
+    front_clear_mm: int
+    reverse_speed: float
+    reverse_heading_gain: float
+    assess_steps: int
+    frontier_update_steps: int
+    frontier_gain: float
+    random_walk_steps: int
 
 
 @dataclass
@@ -756,6 +769,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stuck-window-seconds", type=float, default=4.0)
     parser.add_argument("--stuck-distance-mm", type=float, default=80.0)
     parser.add_argument("--escape-seconds", type=float, default=1.6)
+    parser.add_argument("--stall-detect-min-pwm", type=float, default=0.10)
+    parser.add_argument("--stall-min-counts-per-step", type=int, default=2)
+    parser.add_argument("--stall-threshold-steps", type=int, default=5)
+    parser.add_argument("--dead-end-side-mm", type=int, default=150)
+    parser.add_argument("--min-reverse-mm", type=float, default=200.0)
+    parser.add_argument("--back-obstacle-mm", type=int, default=80)
+    parser.add_argument("--front-clear-mm", type=int, default=200)
+    parser.add_argument("--reverse-speed", type=float, default=0.15)
+    parser.add_argument("--reverse-heading-gain", type=float, default=2.0)
+    parser.add_argument("--assess-steps", type=int, default=3)
+    parser.add_argument("--frontier-update-steps", type=int, default=50)
+    parser.add_argument("--frontier-gain", type=float, default=0.8)
+    parser.add_argument("--random-walk-steps", type=int, default=200)
     parser.add_argument("--min-valid-tof-mm", type=int, default=40)
     parser.add_argument("--max-valid-tof-mm", type=int, default=3000)
     parser.add_argument("--cell-size-mm", type=int, default=50)
@@ -838,6 +864,19 @@ def build_config(args: argparse.Namespace) -> ExploreConfig:
         stuck_window_seconds=args.stuck_window_seconds,
         stuck_distance_mm=args.stuck_distance_mm,
         escape_seconds=args.escape_seconds,
+        stall_detect_min_pwm=args.stall_detect_min_pwm,
+        stall_min_counts_per_step=args.stall_min_counts_per_step,
+        stall_threshold_steps=args.stall_threshold_steps,
+        dead_end_side_mm=args.dead_end_side_mm,
+        min_reverse_mm=args.min_reverse_mm,
+        back_obstacle_mm=args.back_obstacle_mm,
+        front_clear_mm=args.front_clear_mm,
+        reverse_speed=args.reverse_speed,
+        reverse_heading_gain=args.reverse_heading_gain,
+        assess_steps=args.assess_steps,
+        frontier_update_steps=args.frontier_update_steps,
+        frontier_gain=args.frontier_gain,
+        random_walk_steps=args.random_walk_steps,
         min_valid_tof_mm=args.min_valid_tof_mm,
         max_valid_tof_mm=args.max_valid_tof_mm,
         cell_size_mm=args.cell_size_mm,

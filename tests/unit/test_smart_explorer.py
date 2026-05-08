@@ -69,3 +69,16 @@ def test_state_context_defaults() -> None:
     assert ctx.post_reversal is False
     assert ctx.total_rotated == 0.0
     assert ctx.assess_ticks_remaining == 0
+
+
+def test_explore_config_has_new_params() -> None:
+    # Just verify the fields exist on the dataclass
+    import dataclasses
+    fields = {f.name for f in dataclasses.fields(_mod.ExploreConfig)}
+    for name in [
+        "stall_detect_min_pwm", "stall_min_counts_per_step", "stall_threshold_steps",
+        "dead_end_side_mm", "min_reverse_mm", "back_obstacle_mm", "front_clear_mm",
+        "reverse_speed", "reverse_heading_gain", "assess_steps",
+        "frontier_update_steps", "frontier_gain", "random_walk_steps",
+    ]:
+        assert name in fields, f"Missing config field: {name}"
