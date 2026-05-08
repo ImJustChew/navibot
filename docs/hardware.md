@@ -53,10 +53,10 @@ This test assumes a rough wheel track of `105 mm` and gear ratio `105.6`. Calibr
 Run in a clear, supervised test area:
 
 ```bash
-python3 scripts/self_explore_room.py --max-seconds 180 --speed 0.16 --turn-speed 0.15 --wall-side auto --obstacle-mm 40
+python3 scripts/self_explore_room.py --max-seconds 180 --speed 0.20 --turn-speed 0.18 --wall-side auto --obstacle-mm 40
 ```
 
-`--wall-side auto` follows whichever diagonal sensor first sees a wall. Use `--wall-side left` or `--wall-side right` for deterministic tests. `--wall-target-mm` is the desired diagonal TOF distance to the followed wall, not the exact perpendicular wall gap. `--front-turn-mm` makes the robot turn before reaching a front obstacle, while `--obstacle-mm 40` remains the emergency close-range limit.
+`--wall-side auto` follows whichever diagonal sensor first sees a wall. If no wall is visible, the robot drives forward instead of spinning in place. Use `--wall-side left` or `--wall-side right` for deterministic tests. `--wall-target-mm` is the desired diagonal TOF distance to the followed wall, not the exact perpendicular wall gap. `--front-turn-mm` makes the robot arc away before reaching a front obstacle, while `--obstacle-mm 40` remains the emergency close-range limit. If encoder odometry says the robot stayed in roughly the same area for `--stuck-window-seconds`, it runs a short randomized escape arc.
 
 Outputs are written to `artifacts/explore/latest`:
 

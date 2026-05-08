@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -50,6 +51,7 @@ class ExploreConfig:
     output_dir: Path
     speed: float
     turn_speed: float
+    min_forward_pwm: float
     loop_seconds: float
     log_interval_seconds: float
     max_steps: int
@@ -64,6 +66,10 @@ class ExploreConfig:
     wall_detect_mm: int
     wall_gain: float
     max_steer: float
+    arc_slow_pwm: float
+    stuck_window_seconds: float
+    stuck_distance_mm: float
+    escape_seconds: float
     min_valid_tof_mm: int
     max_valid_tof_mm: int
     cell_size_mm: int
@@ -315,6 +321,26 @@ def set_wheel_speeds(rig: ExploreRig, left_pwm: float, right_pwm: float) -> None
         rig.right.motor.reverse(abs(right_pwm))
 
 
+def forward_pwm(value: float, config: ExploreConfig) -> float:
+    if value <= 0:
+        return 0.0
+    return clamp(value, config.min_forward_pwm, config.speed + config.max_steer)
+
+
+def forward_arc(
+    action: str,
+    turn: str,
+    wall_side: str | None,
+    last_turn: str,
+    config: ExploreConfig,
+) -> tuple[str, float, float, str, str | None]:
+    slow = min(config.arc_slow_pwm, config.speed)
+    fast = min(config.speed + config.max_steer, config.motor_voltage_limit / config.supply_voltage)
+    if turn == "rotate_left":
+        return action, slow, fast, "rotate_left", wall_side
+    return action, fast, slow, "rotate_right", wall_side
+
+
 def wall_follow_command(
     readings: dict[str, int | None],
     wall_side: str | None,
@@ -331,9 +357,9 @@ def wall_follow_command(
         return f"emergency_{turn}", -pwm if turn == "rotate_left" else pwm, pwm if turn == "rotate_left" else -pwm, turn, wall_side
 
     if left is not None and left <= config.side_obstacle_mm:
-        return "side_avoid_right", config.turn_speed, -config.turn_speed, "rotate_right", "left"
+        return forward_arc("side_avoid_right", "rotate_right", "left", last_turn, config)
     if right is not None and right <= config.side_obstacle_mm:
-        return "side_avoid_left", -config.turn_speed, config.turn_speed, "rotate_left", "right"
+        return forward_arc("side_avoid_left", "rotate_left", "right", last_turn, config)
 
     if front is not None and front <= config.front_turn_mm:
         if wall_side == "left":
@@ -342,21 +368,17 @@ def wall_follow_command(
             turn = "rotate_left"
         else:
             turn = choose_turn_direction(readings, last_turn)
-        pwm = config.turn_speed
-        return f"front_{turn}", -pwm if turn == "rotate_left" else pwm, pwm if turn == "rotate_left" else -pwm, turn, wall_side
+        return forward_arc(f"front_{turn}", turn, wall_side, last_turn, config)
 
     follow_side = choose_wall_side(readings, wall_side, config)
     if follow_side is None:
-        # No wall acquired yet. Arc left slowly so the robot eventually catches a wall instead of roaming randomly.
-        left_pwm = config.speed * 0.72
-        right_pwm = min(config.speed + config.max_steer * 0.5, config.speed + config.max_steer)
-        return "search_wall", left_pwm, right_pwm, last_turn, follow_side
+        return "search_forward", config.speed, config.speed, last_turn, follow_side
 
     wall_reading = left if follow_side == "left" else right
     if wall_reading is None:
         if follow_side == "left":
-            return "reacquire_left", config.speed * 0.65, config.speed + config.max_steer, "rotate_left", follow_side
-        return "reacquire_right", config.speed + config.max_steer, config.speed * 0.65, "rotate_right", follow_side
+            return forward_arc("reacquire_left", "rotate_left", follow_side, last_turn, config)
+        return forward_arc("reacquire_right", "rotate_right", follow_side, last_turn, config)
 
     error_mm = wall_reading - config.wall_target_mm
     if abs(error_mm) <= config.wall_deadband_mm:
@@ -373,11 +395,15 @@ def wall_follow_command(
 
     return (
         f"follow_{follow_side}",
-        clamp(left_pwm, 0.0, config.speed + config.max_steer),
-        clamp(right_pwm, 0.0, config.speed + config.max_steer),
+        forward_pwm(left_pwm, config),
+        forward_pwm(right_pwm, config),
         last_turn,
         follow_side,
     )
+
+
+def distance_between(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
 def run_explore(config: ExploreConfig) -> None:
@@ -398,6 +424,10 @@ def run_explore(config: ExploreConfig) -> None:
     stop_reason = "max_steps"
     started_at = monotonic()
     last_log_at = 0.0
+    stuck_anchor_time = 0.0
+    stuck_anchor_xy = (0.0, 0.0)
+    escape_until = 0.0
+    escape_turn = "rotate_left"
 
     try:
         rig.enable()
@@ -428,12 +458,30 @@ def run_explore(config: ExploreConfig) -> None:
 
             new_cells = integrate_readings(grid, pose, readings, config, points, elapsed)
             no_new_steps = no_new_steps + 1 if new_cells == 0 else 0
-            action, left_pwm, right_pwm, last_turn, wall_side = wall_follow_command(
-                readings,
-                wall_side,
-                last_turn,
-                config,
-            )
+            if elapsed - stuck_anchor_time >= config.stuck_window_seconds:
+                moved_mm = distance_between(stuck_anchor_xy, (pose.x_mm, pose.y_mm))
+                if moved_mm < config.stuck_distance_mm:
+                    escape_until = elapsed + config.escape_seconds
+                    escape_turn = random.choice(("rotate_left", "rotate_right"))
+                    wall_side = None
+                stuck_anchor_time = elapsed
+                stuck_anchor_xy = (pose.x_mm, pose.y_mm)
+
+            if elapsed < escape_until:
+                action, left_pwm, right_pwm, last_turn, wall_side = forward_arc(
+                    f"escape_{escape_turn}",
+                    escape_turn,
+                    None,
+                    last_turn,
+                    config,
+                )
+            else:
+                action, left_pwm, right_pwm, last_turn, wall_side = wall_follow_command(
+                    readings,
+                    wall_side,
+                    last_turn,
+                    config,
+                )
             set_wheel_speeds(rig, left_pwm, right_pwm)
 
             path.append(
@@ -650,8 +698,9 @@ def render_html(payload: dict[str, object]) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Explore until no new TOF grid cells are discovered.")
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/explore/latest"))
-    parser.add_argument("--speed", type=float, default=0.16)
-    parser.add_argument("--turn-speed", type=float, default=0.15)
+    parser.add_argument("--speed", type=float, default=0.20)
+    parser.add_argument("--turn-speed", type=float, default=0.18)
+    parser.add_argument("--min-forward-pwm", type=float, default=0.14)
     parser.add_argument("--loop-seconds", type=float, default=0.05)
     parser.add_argument("--log-interval-seconds", type=float, default=0.5)
     parser.add_argument("--max-steps", type=int, default=3600)
@@ -659,13 +708,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stop-after-no-new-steps", type=int, default=400)
     parser.add_argument("--obstacle-mm", type=int, default=40)
     parser.add_argument("--side-obstacle-mm", type=int, default=70)
-    parser.add_argument("--front-turn-mm", type=int, default=180)
+    parser.add_argument("--front-turn-mm", type=int, default=120)
     parser.add_argument("--wall-side", choices=("auto", "left", "right"), default="auto")
-    parser.add_argument("--wall-target-mm", type=int, default=160)
-    parser.add_argument("--wall-deadband-mm", type=int, default=25)
+    parser.add_argument("--wall-target-mm", type=int, default=190)
+    parser.add_argument("--wall-deadband-mm", type=int, default=35)
     parser.add_argument("--wall-detect-mm", type=int, default=700)
-    parser.add_argument("--wall-gain", type=float, default=0.0016)
-    parser.add_argument("--max-steer", type=float, default=0.055)
+    parser.add_argument("--wall-gain", type=float, default=0.0009)
+    parser.add_argument("--max-steer", type=float, default=0.045)
+    parser.add_argument("--arc-slow-pwm", type=float, default=0.14)
+    parser.add_argument("--stuck-window-seconds", type=float, default=4.0)
+    parser.add_argument("--stuck-distance-mm", type=float, default=80.0)
+    parser.add_argument("--escape-seconds", type=float, default=1.6)
     parser.add_argument("--min-valid-tof-mm", type=int, default=40)
     parser.add_argument("--max-valid-tof-mm", type=int, default=3000)
     parser.add_argument("--cell-size-mm", type=int, default=50)
@@ -701,6 +754,8 @@ def parse_args() -> argparse.Namespace:
 def build_config(args: argparse.Namespace) -> ExploreConfig:
     if args.speed <= 0 or args.turn_speed <= 0:
         raise ValueError("--speed and --turn-speed must be greater than zero")
+    if args.min_forward_pwm < 0 or args.arc_slow_pwm < 0:
+        raise ValueError("--min-forward-pwm and --arc-slow-pwm cannot be negative")
     if args.loop_seconds <= 0:
         raise ValueError("--loop-seconds must be greater than zero")
     if args.cell_size_mm <= 0 or args.ray_step_mm <= 0:
@@ -709,6 +764,10 @@ def build_config(args: argparse.Namespace) -> ExploreConfig:
         raise ValueError("--stop-after-no-new-steps must be greater than zero")
     if args.max_steer < 0:
         raise ValueError("--max-steer cannot be negative")
+    if args.stuck_window_seconds <= 0 or args.escape_seconds <= 0:
+        raise ValueError("--stuck-window-seconds and --escape-seconds must be greater than zero")
+    if args.stuck_distance_mm < 0:
+        raise ValueError("--stuck-distance-mm cannot be negative")
 
     return ExploreConfig(
         left=WheelPins(
@@ -723,6 +782,7 @@ def build_config(args: argparse.Namespace) -> ExploreConfig:
         output_dir=args.output_dir,
         speed=args.speed,
         turn_speed=args.turn_speed,
+        min_forward_pwm=args.min_forward_pwm,
         loop_seconds=args.loop_seconds,
         log_interval_seconds=args.log_interval_seconds,
         max_steps=args.max_steps,
@@ -737,6 +797,10 @@ def build_config(args: argparse.Namespace) -> ExploreConfig:
         wall_detect_mm=args.wall_detect_mm,
         wall_gain=args.wall_gain,
         max_steer=args.max_steer,
+        arc_slow_pwm=args.arc_slow_pwm,
+        stuck_window_seconds=args.stuck_window_seconds,
+        stuck_distance_mm=args.stuck_distance_mm,
+        escape_seconds=args.escape_seconds,
         min_valid_tof_mm=args.min_valid_tof_mm,
         max_valid_tof_mm=args.max_valid_tof_mm,
         cell_size_mm=args.cell_size_mm,
