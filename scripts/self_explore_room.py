@@ -253,6 +253,41 @@ class TofCache:
         return dict(self.readings)
 
 
+class StallDetector:
+    def __init__(self, min_pwm: float, min_counts: int, threshold_steps: int) -> None:
+        self._min_pwm = min_pwm
+        self._min_counts = min_counts
+        self._threshold = threshold_steps
+        self._consecutive = 0
+
+    def update(self, commanded_pwm: float, actual_delta: int) -> bool:
+        """Return True if stall threshold reached this step."""
+        if commanded_pwm < self._min_pwm:
+            self._consecutive = 0
+            return False
+        if actual_delta < self._min_counts:
+            self._consecutive += 1
+        else:
+            self._consecutive = 0
+        return self._consecutive >= self._threshold
+
+    def reset(self) -> None:
+        self._consecutive = 0
+
+
+def detect_dead_end(
+    readings: dict[str, int | None],
+    obstacle_mm: int,
+    dead_end_side_mm: int,
+) -> bool:
+    front = readings.get("front")
+    left = readings.get("left45")
+    right = readings.get("right45")
+    if front is None or left is None or right is None:
+        return False
+    return front < obstacle_mm and left < dead_end_side_mm and right < dead_end_side_mm
+
+
 def counts_to_mm(counts: int, config: ExploreConfig) -> float:
     counts_per_rev = config.pulses_per_channel * 4 * config.gear_ratio
     circumference_mm = math.pi * config.wheel_diameter_mm

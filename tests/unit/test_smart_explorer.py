@@ -82,3 +82,58 @@ def test_explore_config_has_new_params() -> None:
         "frontier_update_steps", "frontier_gain", "random_walk_steps",
     ]:
         assert name in fields, f"Missing config field: {name}"
+
+
+StallDetector = _mod.StallDetector
+detect_dead_end = _mod.detect_dead_end
+
+
+def test_stall_detector_no_trigger_below_threshold() -> None:
+    sd = StallDetector(min_pwm=0.10, min_counts=2, threshold_steps=5)
+    for _ in range(4):
+        result = sd.update(commanded_pwm=0.20, actual_delta=1)
+    assert result is False
+
+
+def test_stall_detector_triggers_at_threshold() -> None:
+    sd = StallDetector(min_pwm=0.10, min_counts=2, threshold_steps=5)
+    for _ in range(5):
+        result = sd.update(commanded_pwm=0.20, actual_delta=1)
+    assert result is True
+
+
+def test_stall_detector_resets_on_movement() -> None:
+    sd = StallDetector(min_pwm=0.10, min_counts=2, threshold_steps=5)
+    for _ in range(4):
+        sd.update(commanded_pwm=0.20, actual_delta=1)
+    sd.update(commanded_pwm=0.20, actual_delta=10)  # movement resets counter
+    for _ in range(4):
+        result = sd.update(commanded_pwm=0.20, actual_delta=1)
+    assert result is False  # only 4 consecutive again
+
+
+def test_stall_detector_inactive_below_min_pwm() -> None:
+    sd = StallDetector(min_pwm=0.10, min_counts=2, threshold_steps=5)
+    for _ in range(10):
+        result = sd.update(commanded_pwm=0.05, actual_delta=0)
+    assert result is False
+
+
+def test_detect_dead_end_all_close() -> None:
+    readings = {"front": 50, "left45": 100, "right45": 120}
+    assert detect_dead_end(readings, obstacle_mm=80, dead_end_side_mm=150) is True
+
+
+def test_detect_dead_end_front_clear() -> None:
+    readings = {"front": 200, "left45": 100, "right45": 120}
+    assert detect_dead_end(readings, obstacle_mm=80, dead_end_side_mm=150) is False
+
+
+def test_detect_dead_end_none_readings() -> None:
+    readings = {"front": 50, "left45": None, "right45": 120}
+    assert detect_dead_end(readings, obstacle_mm=80, dead_end_side_mm=150) is False
+
+
+def test_detect_dead_end_one_side_clear() -> None:
+    readings = {"front": 50, "left45": 200, "right45": 120}
+    assert detect_dead_end(readings, obstacle_mm=80, dead_end_side_mm=150) is False
