@@ -288,6 +288,61 @@ def detect_dead_end(
     return front < obstacle_mm and left < dead_end_side_mm and right < dead_end_side_mm
 
 
+NEIGHBORS_8: tuple[tuple[int, int], ...] = (
+    (-1, -1), (0, -1), (1, -1),
+    (-1,  0),          (1,  0),
+    (-1,  1), (0,  1), (1,  1),
+)
+
+
+class FrontierCache:
+    def __init__(self, update_steps: int) -> None:
+        self._update_steps = update_steps
+        self._last_update = -1
+        self._cached: float | None = None
+
+    def get(self, step: int, grid: OccupancyGrid, pose: Pose) -> float | None:
+        if step - self._last_update >= self._update_steps or self._last_update < 0:
+            self._cached = self._compute(grid, pose)
+            self._last_update = step
+        return self._cached
+
+    def invalidate(self) -> None:
+        self._last_update = -1
+
+    def _compute(self, grid: OccupancyGrid, pose: Pose) -> float | None:
+        cell_size = grid.cell_size_mm
+        frontiers: list[tuple[float, float]] = []
+        for fx, fy in grid.free:
+            if (fx, fy) in grid.penalized:
+                continue
+            for dx, dy in NEIGHBORS_8:
+                nx, ny = fx + dx, fy + dy
+                if (nx, ny) not in grid.free and (nx, ny) not in grid.occupied:
+                    frontiers.append((fx * cell_size, fy * cell_size))
+                    break
+        if not frontiers:
+            return None
+        nearest = min(frontiers, key=lambda c: math.hypot(c[0] - pose.x_mm, c[1] - pose.y_mm))
+        return math.atan2(nearest[1] - pose.y_mm, nearest[0] - pose.x_mm)
+
+
+def choose_turn_biased(
+    readings: dict[str, int | None],
+    frontier_heading: float | None,
+    current_theta: float,
+    last_turn: str,
+) -> str:
+    left = readings.get("left45") or 0
+    right = readings.get("right45") or 0
+    if abs(left - right) >= 40:
+        return "rotate_left" if left > right else "rotate_right"
+    if frontier_heading is not None:
+        diff = normalize_angle(frontier_heading - current_theta)
+        return "rotate_left" if diff > 0 else "rotate_right"
+    return last_turn
+
+
 def counts_to_mm(counts: int, config: ExploreConfig) -> float:
     counts_per_rev = config.pulses_per_channel * 4 * config.gear_ratio
     circumference_mm = math.pi * config.wheel_diameter_mm

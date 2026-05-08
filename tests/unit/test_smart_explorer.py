@@ -137,3 +137,75 @@ def test_detect_dead_end_none_readings() -> None:
 def test_detect_dead_end_one_side_clear() -> None:
     readings = {"front": 50, "left45": 200, "right45": 120}
     assert detect_dead_end(readings, obstacle_mm=80, dead_end_side_mm=150) is False
+
+
+FrontierCache = _mod.FrontierCache
+choose_turn_biased = _mod.choose_turn_biased
+Pose = _mod.Pose
+
+
+def test_frontier_cache_returns_none_on_empty_grid() -> None:
+    grid = OccupancyGrid(cell_size_mm=50)
+    cache = FrontierCache(update_steps=10)
+    pose = Pose(x_mm=0.0, y_mm=0.0, theta_rad=0.0)
+    result = cache.get(step=5, grid=grid, pose=pose)
+    assert result is None
+
+
+def test_frontier_cache_finds_frontier_heading() -> None:
+    grid = OccupancyGrid(cell_size_mm=50)
+    # Robot at origin, one free cell to the east, unknown to its east
+    grid.free.add((0, 0))   # robot cell is free
+    grid.free.add((1, 0))   # cell to east is free — its neighbor (2,0) is unknown
+    pose = Pose(x_mm=25.0, y_mm=25.0, theta_rad=0.0)
+    cache = FrontierCache(update_steps=10)
+    heading = cache.get(step=0, grid=grid, pose=pose)
+    assert heading is not None
+    # Should point roughly eastward (angle near 0)
+    assert abs(heading) < math.pi / 2
+
+
+def test_frontier_cache_excludes_penalized() -> None:
+    grid = OccupancyGrid(cell_size_mm=50)
+    grid.free.add((0, 0))
+    grid.occupied.add((1, 0))  # block direct frontier
+    grid.penalized.add((0, 0))  # penalize the frontier cell itself
+    pose = Pose(x_mm=0.0, y_mm=0.0, theta_rad=0.0)
+    cache = FrontierCache(update_steps=10)
+    result = cache.get(step=0, grid=grid, pose=pose)
+    assert result is None
+
+
+def test_frontier_cache_respects_update_interval() -> None:
+    grid = OccupancyGrid(cell_size_mm=50)
+    grid.free.add((0, 0))
+    grid.free.add((1, 0))
+    pose = Pose(x_mm=0.0, y_mm=0.0, theta_rad=0.0)
+    cache = FrontierCache(update_steps=10)
+    h1 = cache.get(step=0, grid=grid, pose=pose)
+    # Add more free cells — but cache shouldn't update until step 10
+    grid.free.add((5, 5))
+    h2 = cache.get(step=5, grid=grid, pose=pose)
+    assert h1 == h2  # cached value unchanged
+
+
+def test_choose_turn_biased_prefers_open_side() -> None:
+    readings = {"front": 300, "left45": 400, "right45": 100}
+    direction = choose_turn_biased(readings, frontier_heading=None,
+                                   current_theta=0.0, last_turn="rotate_left")
+    assert direction == "rotate_left"  # left is more open
+
+
+def test_choose_turn_biased_uses_frontier_when_sides_equal() -> None:
+    readings = {"front": 300, "left45": 300, "right45": 300}
+    # frontier is 90° to the left (pi/2), robot faces 0 → should turn left
+    direction = choose_turn_biased(readings, frontier_heading=math.pi / 2,
+                                   current_theta=0.0, last_turn="rotate_right")
+    assert direction == "rotate_left"
+
+
+def test_choose_turn_biased_fallback_to_last_turn() -> None:
+    readings = {"front": 300, "left45": 300, "right45": 300}
+    direction = choose_turn_biased(readings, frontier_heading=None,
+                                   current_theta=0.0, last_turn="rotate_right")
+    assert direction == "rotate_right"
