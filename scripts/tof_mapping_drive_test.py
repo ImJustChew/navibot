@@ -101,7 +101,6 @@ class Wheel:
         self.encoder = QuadratureEncoder(pins.encoder, pull_up=pull_up, inverted=encoder_inverted)
 
     def close(self) -> None:
-        self.motor.close()
         self.encoder.close()
 
 
@@ -132,8 +131,8 @@ class MappingRig:
 
     def close(self) -> None:
         self.drive.close()
-        self.left.close()
-        self.right.close()
+        self.left.encoder.close()
+        self.right.encoder.close()
         self.tof.close()
 
 
@@ -426,4 +425,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
