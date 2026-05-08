@@ -8,8 +8,9 @@ odometry plus four VL53L1X range rays to build a simple occupancy grid:
 - occupied cells are marked at range endpoints
 - robot path is recorded from wheel encoder odometry
 
-The robot explores with short pulses. It rotates when blocked or when it has
-not discovered new cells recently, and stops after sustained no-new-coverage.
+The robot explores with continuous bounded drive segments. It rotates when
+blocked or when it has not discovered new cells recently, and stops after
+sustained no-new-coverage.
 """
 
 from __future__ import annotations
@@ -49,14 +50,17 @@ class ExploreConfig:
     output_dir: Path
     speed: float
     turn_speed: float
-    forward_pulse_seconds: float
-    turn_pulse_seconds: float
+    forward_segment_seconds: float
+    turn_check_seconds: float
+    max_turn_seconds: float
+    sensor_check_seconds: float
     settle_seconds: float
     max_steps: int
     max_seconds: float
     stop_after_no_new_steps: int
     scan_after_no_new_steps: int
     obstacle_mm: int
+    clear_front_mm: int
     min_valid_tof_mm: int
     max_valid_tof_mm: int
     cell_size_mm: int
@@ -265,20 +269,64 @@ def choose_action(readings: dict[str, int | None], no_new_steps: int, config: Ex
     return "forward"
 
 
-def execute_action(rig: ExploreRig, action: str, config: ExploreConfig) -> None:
+def choose_turn_direction(readings: dict[str, int | None], last_turn: str) -> str:
+    left = readings.get("left45") or 0
+    right = readings.get("right45") or 0
+    if abs(left - right) < 40:
+        return last_turn
+    return "rotate_left" if left > right else "rotate_right"
+
+
+def execute_action(
+    rig: ExploreRig,
+    action: str,
+    config: ExploreConfig,
+    last_turn: str,
+) -> tuple[str, str]:
     if action == "forward":
-        rig.drive.forward(config.speed)
-        sleep(config.forward_pulse_seconds)
+        return drive_forward_segment(rig, config), last_turn
     elif action == "rotate_left":
-        rig.drive.rotate_left(config.turn_speed)
-        sleep(config.turn_pulse_seconds)
+        rotate_until_clear(rig, config, "rotate_left")
+        return "rotate_left", "rotate_left"
     elif action == "rotate_right":
-        rig.drive.rotate_right(config.turn_speed)
-        sleep(config.turn_pulse_seconds)
+        rotate_until_clear(rig, config, "rotate_right")
+        return "rotate_right", "rotate_right"
     else:
         raise ValueError(f"unknown action: {action}")
-    rig.drive.coast()
-    sleep(config.settle_seconds)
+
+
+def drive_forward_segment(rig: ExploreRig, config: ExploreConfig) -> str:
+    started = monotonic()
+    rig.drive.forward(config.speed)
+    try:
+        while monotonic() - started < config.forward_segment_seconds:
+            sleep(config.sensor_check_seconds)
+            readings = latest_tof_readings(rig, timeout_seconds=0.12)
+            front = readings.get("front")
+            if front is not None and front <= config.obstacle_mm:
+                return "forward_blocked"
+        return "forward"
+    finally:
+        rig.drive.coast()
+        sleep(config.settle_seconds)
+
+
+def rotate_until_clear(rig: ExploreRig, config: ExploreConfig, direction: str) -> None:
+    started = monotonic()
+    if direction == "rotate_left":
+        rig.drive.rotate_left(config.turn_speed)
+    else:
+        rig.drive.rotate_right(config.turn_speed)
+    try:
+        while monotonic() - started < config.max_turn_seconds:
+            sleep(config.turn_check_seconds)
+            readings = latest_tof_readings(rig, timeout_seconds=0.12)
+            front = readings.get("front")
+            if front is not None and front >= config.clear_front_mm:
+                return
+    finally:
+        rig.drive.coast()
+        sleep(config.settle_seconds)
 
 
 def run_explore(config: ExploreConfig) -> None:
@@ -293,6 +341,8 @@ def run_explore(config: ExploreConfig) -> None:
     previous_left = 0
     previous_right = 0
     no_new_steps = 0
+    stuck_turns = 0
+    last_turn = "rotate_left"
     stop_reason = "max_steps"
     started_at = monotonic()
 
@@ -312,7 +362,9 @@ def run_explore(config: ExploreConfig) -> None:
 
             readings_before = latest_tof_readings(rig)
             action = choose_action(readings_before, no_new_steps, config)
-            execute_action(rig, action, config)
+            if action.startswith("rotate"):
+                action = choose_turn_direction(readings_before, last_turn)
+            executed_action, last_turn = execute_action(rig, action, config, last_turn)
 
             left_sample = rig.left.encoder.sample()
             right_sample = rig.right.encoder.sample()
@@ -329,11 +381,24 @@ def run_explore(config: ExploreConfig) -> None:
             readings = latest_tof_readings(rig)
             new_cells = integrate_readings(grid, pose, readings, config, points, elapsed)
             no_new_steps = no_new_steps + 1 if new_cells == 0 else 0
+            front_after = readings.get("front")
+            if (
+                executed_action.startswith("rotate")
+                and front_after is not None
+                and front_after <= config.obstacle_mm
+            ):
+                stuck_turns += 1
+            else:
+                stuck_turns = 0
+            if stuck_turns >= 6:
+                last_turn = "rotate_right" if last_turn == "rotate_left" else "rotate_left"
+                no_new_steps = max(no_new_steps, config.scan_after_no_new_steps)
+                stuck_turns = 0
             path.append(
                 {
                     "step": step,
                     "t_s": elapsed,
-                    "action": action,
+                    "action": executed_action,
                     "x_mm": pose.x_mm,
                     "y_mm": pose.y_mm,
                     "theta_rad": pose.theta_rad,
@@ -350,7 +415,7 @@ def run_explore(config: ExploreConfig) -> None:
                 }
             )
             print(
-                f"step={step:03d} action={action:<12} new={new_cells:03d} "
+                f"step={step:03d} action={executed_action:<15} new={new_cells:03d} "
                 f"no_new={no_new_steps:02d} cells={len(grid.free) + len(grid.occupied):04d} "
                 f"pose=({pose.x_mm:7.1f},{pose.y_mm:7.1f},{math.degrees(pose.theta_rad):6.1f}deg) "
                 f"front={readings.get('front')} left45={readings.get('left45')} "
@@ -537,14 +602,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/explore/latest"))
     parser.add_argument("--speed", type=float, default=0.13)
     parser.add_argument("--turn-speed", type=float, default=0.13)
-    parser.add_argument("--forward-pulse-seconds", type=float, default=0.22)
-    parser.add_argument("--turn-pulse-seconds", type=float, default=0.18)
+    parser.add_argument("--forward-segment-seconds", type=float, default=1.0)
+    parser.add_argument("--turn-check-seconds", type=float, default=0.08)
+    parser.add_argument("--max-turn-seconds", type=float, default=1.2)
+    parser.add_argument("--sensor-check-seconds", type=float, default=0.08)
     parser.add_argument("--settle-seconds", type=float, default=0.05)
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--max-seconds", type=float, default=180.0)
     parser.add_argument("--stop-after-no-new-steps", type=int, default=35)
     parser.add_argument("--scan-after-no-new-steps", type=int, default=8)
-    parser.add_argument("--obstacle-mm", type=int, default=180)
+    parser.add_argument("--obstacle-mm", type=int, default=40)
+    parser.add_argument("--clear-front-mm", type=int, default=140)
     parser.add_argument("--min-valid-tof-mm", type=int, default=40)
     parser.add_argument("--max-valid-tof-mm", type=int, default=3000)
     parser.add_argument("--cell-size-mm", type=int, default=50)
@@ -598,14 +666,17 @@ def build_config(args: argparse.Namespace) -> ExploreConfig:
         output_dir=args.output_dir,
         speed=args.speed,
         turn_speed=args.turn_speed,
-        forward_pulse_seconds=args.forward_pulse_seconds,
-        turn_pulse_seconds=args.turn_pulse_seconds,
+        forward_segment_seconds=args.forward_segment_seconds,
+        turn_check_seconds=args.turn_check_seconds,
+        max_turn_seconds=args.max_turn_seconds,
+        sensor_check_seconds=args.sensor_check_seconds,
         settle_seconds=args.settle_seconds,
         max_steps=args.max_steps,
         max_seconds=args.max_seconds,
         stop_after_no_new_steps=args.stop_after_no_new_steps,
         scan_after_no_new_steps=args.scan_after_no_new_steps,
         obstacle_mm=args.obstacle_mm,
+        clear_front_mm=args.clear_front_mm,
         min_valid_tof_mm=args.min_valid_tof_mm,
         max_valid_tof_mm=args.max_valid_tof_mm,
         cell_size_mm=args.cell_size_mm,
@@ -630,4 +701,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
