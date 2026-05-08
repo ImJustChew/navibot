@@ -48,15 +48,15 @@ This test assumes a rough wheel track of `105 mm` and gear ratio `105.6`. Calibr
 
 ## Self Exploration Map Test
 
-`scripts/self_explore_room.py` is a more autonomous room exploration proof. It maintains a simple occupancy grid from TOF rays, records encoder odometry, and stops when it has not discovered new grid cells for a sustained period. It drives in continuous bounded segments and checks TOF frequently instead of using tiny movement pulses.
+`scripts/self_explore_room.py` is a more autonomous room exploration proof. It maintains a simple occupancy grid from TOF rays, records encoder odometry, and stops when it has not discovered new grid cells for a sustained period. It drives continuously in bounded segments and checks cached readings from all four TOF sensors while the motors are active.
 
 Run in a clear, supervised test area:
 
 ```bash
-python3 scripts/self_explore_room.py --max-seconds 180 --max-steps 300 --speed 0.13 --turn-speed 0.13 --forward-segment-seconds 1.0 --obstacle-mm 40
+python3 scripts/self_explore_room.py --max-seconds 180 --max-steps 300 --speed 0.13 --turn-speed 0.13 --forward-segment-seconds 3.0 --obstacle-mm 40
 ```
 
-`--obstacle-mm 40` lets the robot approach obstacles to roughly the VL53L1X practical close range before treating the path as blocked. `--clear-front-mm` is separate and defaults higher, so once blocked it rotates until the front path has enough room to keep moving instead of repeatedly making tiny forward/turn pulses.
+`--obstacle-mm 40` lets the robot approach front obstacles to roughly the VL53L1X practical close range before treating the path as blocked. The diagonal sensors use `--side-obstacle-mm`, which defaults to `70`, so side/corner hits can still interrupt forward motion before the chassis clips an obstacle. `--clear-front-mm` and `--clear-side-mm` are separate and default higher, so once blocked it rotates until the path has enough room to keep moving instead of repeatedly making tiny forward/turn pulses.
 
 Outputs are written to `artifacts/explore/latest`:
 

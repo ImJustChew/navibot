@@ -9,8 +9,8 @@ odometry plus four VL53L1X range rays to build a simple occupancy grid:
 - robot path is recorded from wheel encoder odometry
 
 The robot explores with continuous bounded drive segments. It rotates when
-blocked or when it has not discovered new cells recently, and stops after
-sustained no-new-coverage.
+blocked by any forward-facing TOF sensor or when it has not discovered new
+cells recently, and stops after sustained no-new-coverage.
 """
 
 from __future__ import annotations
@@ -60,7 +60,9 @@ class ExploreConfig:
     stop_after_no_new_steps: int
     scan_after_no_new_steps: int
     obstacle_mm: int
+    side_obstacle_mm: int
     clear_front_mm: int
+    clear_side_mm: int
     min_valid_tof_mm: int
     max_valid_tof_mm: int
     cell_size_mm: int
@@ -169,6 +171,31 @@ class ExploreRig:
         self.tof.close()
 
 
+class TofCache:
+    def __init__(self) -> None:
+        self.readings: dict[str, int | None] = {
+            "front": None,
+            "left45": None,
+            "right45": None,
+            "back": None,
+        }
+
+    def update(self, rig: ExploreRig) -> dict[str, int | None]:
+        for reading in rig.tof.read_all():
+            if reading.ready:
+                self.readings[reading.name] = reading.distance_mm
+        return dict(self.readings)
+
+    def wait_ready(self, rig: ExploreRig, timeout_seconds: float) -> dict[str, int | None]:
+        deadline = monotonic() + timeout_seconds
+        while monotonic() < deadline:
+            self.update(rig)
+            if all(value is not None for value in self.readings.values()):
+                break
+            sleep(0.01)
+        return dict(self.readings)
+
+
 def counts_to_mm(counts: int, config: ExploreConfig) -> float:
     counts_per_rev = config.pulses_per_channel * 4 * config.gear_ratio
     circumference_mm = math.pi * config.wheel_diameter_mm
@@ -202,7 +229,14 @@ def normalize_angle(angle: float) -> float:
     return angle
 
 
-def latest_tof_readings(rig: ExploreRig, timeout_seconds: float = 0.5) -> dict[str, int | None]:
+def latest_tof_readings(
+    rig: ExploreRig,
+    timeout_seconds: float = 0.5,
+    cache: TofCache | None = None,
+) -> dict[str, int | None]:
+    if cache is not None:
+        return cache.wait_ready(rig, timeout_seconds)
+
     deadline = monotonic() + timeout_seconds
     readings: dict[str, int | None] = {}
     while monotonic() < deadline:
@@ -257,13 +291,11 @@ def integrate_readings(
 
 
 def choose_action(readings: dict[str, int | None], no_new_steps: int, config: ExploreConfig) -> str:
-    front = readings.get("front")
     left = readings.get("left45") or 0
     right = readings.get("right45") or 0
-    blocked = front is not None and front <= config.obstacle_mm
 
-    if blocked:
-        return "rotate_left" if left > right else "rotate_right"
+    if path_blocked(readings, config):
+        return choose_turn_direction(readings, "rotate_left")
     if no_new_steps >= config.scan_after_no_new_steps:
         return "rotate_left" if left > right else "rotate_right"
     return "forward"
@@ -277,41 +309,82 @@ def choose_turn_direction(readings: dict[str, int | None], last_turn: str) -> st
     return "rotate_left" if left > right else "rotate_right"
 
 
+def path_blocked(readings: dict[str, int | None], config: ExploreConfig) -> bool:
+    front = readings.get("front")
+    left = readings.get("left45")
+    right = readings.get("right45")
+    return (
+        (front is not None and front <= config.obstacle_mm)
+        or (left is not None and left <= config.side_obstacle_mm)
+        or (right is not None and right <= config.side_obstacle_mm)
+    )
+
+
+def path_clear(readings: dict[str, int | None], config: ExploreConfig) -> bool:
+    front = readings.get("front")
+    left = readings.get("left45")
+    right = readings.get("right45")
+    return (
+        front is not None
+        and front >= config.clear_front_mm
+        and (left is None or left >= config.clear_side_mm)
+        and (right is None or right >= config.clear_side_mm)
+    )
+
+
 def execute_action(
     rig: ExploreRig,
     action: str,
     config: ExploreConfig,
     last_turn: str,
+    cache: TofCache,
 ) -> tuple[str, str]:
     if action == "forward":
-        return drive_forward_segment(rig, config), last_turn
+        return drive_forward_segment(rig, config, cache, last_turn)
     elif action == "rotate_left":
-        rotate_until_clear(rig, config, "rotate_left")
+        rotate_until_clear(rig, config, cache, "rotate_left")
         return "rotate_left", "rotate_left"
     elif action == "rotate_right":
-        rotate_until_clear(rig, config, "rotate_right")
+        rotate_until_clear(rig, config, cache, "rotate_right")
         return "rotate_right", "rotate_right"
     else:
         raise ValueError(f"unknown action: {action}")
 
 
-def drive_forward_segment(rig: ExploreRig, config: ExploreConfig) -> str:
+def drive_forward_segment(
+    rig: ExploreRig,
+    config: ExploreConfig,
+    cache: TofCache,
+    last_turn: str,
+) -> tuple[str, str]:
     started = monotonic()
+    readings = cache.update(rig)
+    if path_blocked(readings, config):
+        turn = choose_turn_direction(readings, last_turn)
+        rotate_until_clear(rig, config, cache, turn)
+        return f"avoid_{turn}", turn
+
     rig.drive.forward(config.speed)
     try:
         while monotonic() - started < config.forward_segment_seconds:
             sleep(config.sensor_check_seconds)
-            readings = latest_tof_readings(rig, timeout_seconds=0.12)
-            front = readings.get("front")
-            if front is not None and front <= config.obstacle_mm:
-                return "forward_blocked"
-        return "forward"
+            readings = cache.update(rig)
+            if path_blocked(readings, config):
+                rig.drive.coast()
+                turn = choose_turn_direction(readings, last_turn)
+                rotate_until_clear(rig, config, cache, turn)
+                return f"avoid_{turn}", turn
+        return "forward", last_turn
     finally:
         rig.drive.coast()
-        sleep(config.settle_seconds)
 
 
-def rotate_until_clear(rig: ExploreRig, config: ExploreConfig, direction: str) -> None:
+def rotate_until_clear(
+    rig: ExploreRig,
+    config: ExploreConfig,
+    cache: TofCache,
+    direction: str,
+) -> None:
     started = monotonic()
     if direction == "rotate_left":
         rig.drive.rotate_left(config.turn_speed)
@@ -320,9 +393,8 @@ def rotate_until_clear(rig: ExploreRig, config: ExploreConfig, direction: str) -
     try:
         while monotonic() - started < config.max_turn_seconds:
             sleep(config.turn_check_seconds)
-            readings = latest_tof_readings(rig, timeout_seconds=0.12)
-            front = readings.get("front")
-            if front is not None and front >= config.clear_front_mm:
+            readings = cache.update(rig)
+            if path_clear(readings, config):
                 return
     finally:
         rig.drive.coast()
@@ -343,6 +415,7 @@ def run_explore(config: ExploreConfig) -> None:
     no_new_steps = 0
     stuck_turns = 0
     last_turn = "rotate_left"
+    tof_cache = TofCache()
     stop_reason = "max_steps"
     started_at = monotonic()
 
@@ -350,6 +423,7 @@ def run_explore(config: ExploreConfig) -> None:
         rig.enable()
         rig.left.encoder.reset()
         rig.right.encoder.reset()
+        tof_cache.wait_ready(rig, timeout_seconds=1.0)
 
         for step in range(config.max_steps):
             elapsed = monotonic() - started_at
@@ -360,11 +434,11 @@ def run_explore(config: ExploreConfig) -> None:
                 stop_reason = "no_new_cells"
                 break
 
-            readings_before = latest_tof_readings(rig)
+            readings_before = tof_cache.update(rig)
             action = choose_action(readings_before, no_new_steps, config)
             if action.startswith("rotate"):
                 action = choose_turn_direction(readings_before, last_turn)
-            executed_action, last_turn = execute_action(rig, action, config, last_turn)
+            executed_action, last_turn = execute_action(rig, action, config, last_turn, tof_cache)
 
             left_sample = rig.left.encoder.sample()
             right_sample = rig.right.encoder.sample()
@@ -378,7 +452,7 @@ def run_explore(config: ExploreConfig) -> None:
             )
 
             elapsed = monotonic() - started_at
-            readings = latest_tof_readings(rig)
+            readings = tof_cache.update(rig)
             new_cells = integrate_readings(grid, pose, readings, config, points, elapsed)
             no_new_steps = no_new_steps + 1 if new_cells == 0 else 0
             front_after = readings.get("front")
@@ -602,17 +676,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/explore/latest"))
     parser.add_argument("--speed", type=float, default=0.13)
     parser.add_argument("--turn-speed", type=float, default=0.13)
-    parser.add_argument("--forward-segment-seconds", type=float, default=1.0)
-    parser.add_argument("--turn-check-seconds", type=float, default=0.08)
+    parser.add_argument("--forward-segment-seconds", type=float, default=3.0)
+    parser.add_argument("--turn-check-seconds", type=float, default=0.04)
     parser.add_argument("--max-turn-seconds", type=float, default=1.2)
-    parser.add_argument("--sensor-check-seconds", type=float, default=0.08)
+    parser.add_argument("--sensor-check-seconds", type=float, default=0.03)
     parser.add_argument("--settle-seconds", type=float, default=0.05)
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--max-seconds", type=float, default=180.0)
     parser.add_argument("--stop-after-no-new-steps", type=int, default=35)
     parser.add_argument("--scan-after-no-new-steps", type=int, default=8)
     parser.add_argument("--obstacle-mm", type=int, default=40)
+    parser.add_argument("--side-obstacle-mm", type=int, default=70)
     parser.add_argument("--clear-front-mm", type=int, default=140)
+    parser.add_argument("--clear-side-mm", type=int, default=90)
     parser.add_argument("--min-valid-tof-mm", type=int, default=40)
     parser.add_argument("--max-valid-tof-mm", type=int, default=3000)
     parser.add_argument("--cell-size-mm", type=int, default=50)
@@ -676,7 +752,9 @@ def build_config(args: argparse.Namespace) -> ExploreConfig:
         stop_after_no_new_steps=args.stop_after_no_new_steps,
         scan_after_no_new_steps=args.scan_after_no_new_steps,
         obstacle_mm=args.obstacle_mm,
+        side_obstacle_mm=args.side_obstacle_mm,
         clear_front_mm=args.clear_front_mm,
+        clear_side_mm=args.clear_side_mm,
         min_valid_tof_mm=args.min_valid_tof_mm,
         max_valid_tof_mm=args.max_valid_tof_mm,
         cell_size_mm=args.cell_size_mm,
