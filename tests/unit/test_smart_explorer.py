@@ -209,3 +209,114 @@ def test_choose_turn_biased_fallback_to_last_turn() -> None:
     direction = choose_turn_biased(readings, frontier_heading=None,
                                    current_theta=0.0, last_turn="rotate_right")
     assert direction == "rotate_right"
+
+
+# --- tick_assess and tick_reversing ---
+
+tick_assess = _mod.tick_assess
+tick_reversing = _mod.tick_reversing
+ExploreConfig = _mod.ExploreConfig
+WheelPins = _mod.WheelPins
+StateContext = _mod.StateContext
+ExploreState = _mod.ExploreState
+Pose = _mod.Pose
+
+
+def _make_config(**overrides):
+    """Build a minimal ExploreConfig for testing (no hardware pins needed)."""
+    MotorPins = _mod.MotorPins      # real frozen dataclass, loaded by exec_module
+    EncoderPins = _mod.EncoderPins  # real frozen dataclass, loaded by exec_module
+    base = dict(
+        left=WheelPins(motor=MotorPins(pwm=0,in1=0,in2=0), encoder=EncoderPins(a=0,b=0)),
+        right=WheelPins(motor=MotorPins(pwm=0,in1=0,in2=0), encoder=EncoderPins(a=0,b=0)),
+        standby_pin=0, output_dir=pathlib.Path("/tmp"),
+        speed=0.20, turn_speed=0.18, min_forward_pwm=0.14,
+        loop_seconds=0.05, log_interval_seconds=0.5,
+        max_steps=3600, max_seconds=180.0, stop_after_no_new_steps=400,
+        obstacle_mm=80, side_obstacle_mm=70, front_turn_mm=120,
+        wall_side="auto", wall_target_mm=190, wall_deadband_mm=35,
+        wall_detect_mm=700, wall_gain=0.0009, max_steer=0.045,
+        arc_slow_pwm=0.14, stuck_window_seconds=4.0, stuck_distance_mm=80.0,
+        escape_seconds=1.6, min_valid_tof_mm=40, max_valid_tof_mm=3000,
+        cell_size_mm=50, ray_step_mm=50, wheel_diameter_mm=43.0,
+        wheel_track_mm=105.0, pulses_per_channel=7, gear_ratio=105.6,
+        supply_voltage=7.4, motor_voltage_limit=6.0,
+        left_motor_inverted=True, right_motor_inverted=False,
+        left_encoder_inverted=False, right_encoder_inverted=True, pull_up=True,
+        stall_detect_min_pwm=0.10, stall_min_counts_per_step=2,
+        stall_threshold_steps=5, dead_end_side_mm=150, min_reverse_mm=200.0,
+        back_obstacle_mm=80, front_clear_mm=200, reverse_speed=0.15,
+        reverse_heading_gain=2.0, assess_steps=3, frontier_update_steps=50,
+        frontier_gain=0.8, random_walk_steps=200,
+    )
+    base.update(overrides)
+    return ExploreConfig(**base)
+
+
+def test_tick_assess_transitions_to_escape_on_stall() -> None:
+    config = _make_config()
+    ctx = StateContext(state=ExploreState.ASSESS, stall_triggered=True,
+                       assess_ticks_remaining=0)
+    readings = {"front": 50, "left45": 50, "right45": 50, "back": 500}
+    # actual_delta still 0 during assess → escape
+    tick_assess(ctx, readings, config, actual_delta=0)
+    assert ctx.state == ExploreState.ESCAPE
+
+
+def test_tick_assess_transitions_to_reversing_on_dead_end() -> None:
+    config = _make_config()
+    ctx = StateContext(state=ExploreState.ASSESS, stall_triggered=False,
+                       assess_ticks_remaining=0)
+    readings = {"front": 50, "left45": 100, "right45": 100, "back": 500}
+    tick_assess(ctx, readings, config, actual_delta=10)
+    assert ctx.state == ExploreState.REVERSING
+
+
+def test_tick_assess_waits_while_ticks_remaining() -> None:
+    config = _make_config()
+    ctx = StateContext(state=ExploreState.ASSESS, stall_triggered=False,
+                       assess_ticks_remaining=2)
+    readings = {"front": 50, "left45": 100, "right45": 100, "back": 500}
+    tick_assess(ctx, readings, config, actual_delta=10)
+    assert ctx.state == ExploreState.ASSESS  # still waiting
+    assert ctx.assess_ticks_remaining == 1
+
+
+def test_tick_assess_transitions_to_forward_when_clear() -> None:
+    config = _make_config()
+    ctx = StateContext(state=ExploreState.ASSESS, assess_ticks_remaining=0)
+    readings = {"front": 400, "left45": 300, "right45": 300, "back": 500}
+    tick_assess(ctx, readings, config, actual_delta=10)
+    assert ctx.state == ExploreState.FORWARD
+
+
+def test_tick_reversing_stops_when_distance_met() -> None:
+    config = _make_config(min_reverse_mm=100.0)
+    pose = Pose(x_mm=200.0, y_mm=0.0, theta_rad=0.0)
+    ctx = StateContext(state=ExploreState.REVERSING,
+                       reverse_start_x=0.0, reverse_start_y=0.0)
+    readings = {"front": 500, "left45": 300, "right45": 300, "back": 300}
+    left_pwm, right_pwm = tick_reversing(ctx, pose, readings, config)
+    assert ctx.state == ExploreState.ASSESS
+    assert ctx.post_reversal is True
+
+
+def test_tick_reversing_stops_on_back_obstacle() -> None:
+    config = _make_config(back_obstacle_mm=100)
+    pose = Pose(x_mm=10.0, y_mm=0.0, theta_rad=0.0)
+    ctx = StateContext(state=ExploreState.REVERSING,
+                       reverse_start_x=0.0, reverse_start_y=0.0)
+    readings = {"front": 500, "left45": 300, "right45": 300, "back": 60}
+    left_pwm, right_pwm = tick_reversing(ctx, pose, readings, config)
+    assert ctx.state == ExploreState.ASSESS
+
+
+def test_tick_reversing_returns_negative_pwm() -> None:
+    config = _make_config()
+    pose = Pose(x_mm=0.0, y_mm=0.0, theta_rad=0.0)
+    ctx = StateContext(state=ExploreState.REVERSING,
+                       reverse_start_x=0.0, reverse_start_y=0.0)
+    readings = {"front": 500, "left45": 300, "right45": 300, "back": 300}
+    left_pwm, right_pwm = tick_reversing(ctx, pose, readings, config)
+    if ctx.state == ExploreState.REVERSING:
+        assert left_pwm < 0 and right_pwm < 0

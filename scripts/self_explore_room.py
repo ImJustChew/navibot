@@ -343,6 +343,57 @@ def choose_turn_biased(
     return last_turn
 
 
+def tick_assess(
+    ctx: StateContext,
+    readings: dict[str, int | None],
+    config: ExploreConfig,
+    actual_delta: int,
+) -> None:
+    """Mutate ctx to advance ASSESS state."""
+    if ctx.assess_ticks_remaining > 0:
+        ctx.assess_ticks_remaining -= 1
+        return
+
+    if ctx.stall_triggered and actual_delta < config.stall_min_counts_per_step:
+        ctx.state = ExploreState.ESCAPE
+        ctx.stall_triggered = False
+        return
+
+    ctx.stall_triggered = False
+
+    if detect_dead_end(readings, config.obstacle_mm, config.dead_end_side_mm):
+        ctx.state = ExploreState.REVERSING
+        return
+
+    front = readings.get("front")
+    if front is not None and front >= config.front_clear_mm:
+        ctx.state = ExploreState.FORWARD
+    else:
+        ctx.state = ExploreState.TURNING
+
+
+def tick_reversing(
+    ctx: StateContext,
+    pose: Pose,
+    readings: dict[str, int | None],
+    config: ExploreConfig,
+) -> tuple[float, float]:
+    """Return (left_pwm, right_pwm) as negatives (reversing). Mutate ctx on exit."""
+    dist = math.hypot(pose.x_mm - ctx.reverse_start_x, pose.y_mm - ctx.reverse_start_y)
+    back = readings.get("back")
+    if dist >= config.min_reverse_mm or (back is not None and back < config.back_obstacle_mm):
+        ctx.state = ExploreState.ASSESS
+        ctx.post_reversal = True
+        ctx.assess_ticks_remaining = config.assess_steps
+        return 0.0, 0.0
+
+    heading_error = normalize_angle(pose.theta_rad - ctx.turn_start_theta)
+    steer = clamp(heading_error * config.reverse_heading_gain, -config.max_steer, config.max_steer)
+    left_pwm = -(config.reverse_speed + steer)
+    right_pwm = -(config.reverse_speed - steer)
+    return left_pwm, right_pwm
+
+
 def counts_to_mm(counts: int, config: ExploreConfig) -> float:
     counts_per_rev = config.pulses_per_channel * 4 * config.gear_ratio
     circumference_mm = math.pi * config.wheel_diameter_mm
