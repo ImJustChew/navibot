@@ -24,7 +24,7 @@ from pathlib import Path
 from time import monotonic, sleep
 
 from navibot.robot.encoders import EncoderPins, QuadratureEncoder
-from navibot.robot.motors import DifferentialDrive, DriverMotor, MotorPins, validate_motor_voltage
+from navibot.robot.motors import DifferentialDrive, DriverMotor, MotorPins, clamp, validate_motor_voltage
 from navibot.sensors.vl53l1x_array import Vl53l1xArray
 
 
@@ -50,19 +50,20 @@ class ExploreConfig:
     output_dir: Path
     speed: float
     turn_speed: float
-    forward_segment_seconds: float
-    turn_check_seconds: float
-    max_turn_seconds: float
-    sensor_check_seconds: float
-    settle_seconds: float
+    loop_seconds: float
+    log_interval_seconds: float
     max_steps: int
     max_seconds: float
     stop_after_no_new_steps: int
-    scan_after_no_new_steps: int
     obstacle_mm: int
     side_obstacle_mm: int
-    clear_front_mm: int
-    clear_side_mm: int
+    front_turn_mm: int
+    wall_side: str
+    wall_target_mm: int
+    wall_deadband_mm: int
+    wall_detect_mm: int
+    wall_gain: float
+    max_steer: float
     min_valid_tof_mm: int
     max_valid_tof_mm: int
     cell_size_mm: int
@@ -229,26 +230,6 @@ def normalize_angle(angle: float) -> float:
     return angle
 
 
-def latest_tof_readings(
-    rig: ExploreRig,
-    timeout_seconds: float = 0.5,
-    cache: TofCache | None = None,
-) -> dict[str, int | None]:
-    if cache is not None:
-        return cache.wait_ready(rig, timeout_seconds)
-
-    deadline = monotonic() + timeout_seconds
-    readings: dict[str, int | None] = {}
-    while monotonic() < deadline:
-        for reading in rig.tof.read_all():
-            if reading.ready:
-                readings[reading.name] = reading.distance_mm
-        if {"front", "left45", "right45", "back"}.issubset(readings):
-            break
-        sleep(0.02)
-    return readings
-
-
 def integrate_readings(
     grid: OccupancyGrid,
     pose: Pose,
@@ -290,18 +271,7 @@ def integrate_readings(
     return new_cells
 
 
-def choose_action(readings: dict[str, int | None], no_new_steps: int, config: ExploreConfig) -> str:
-    left = readings.get("left45") or 0
-    right = readings.get("right45") or 0
-
-    if path_blocked(readings, config):
-        return choose_turn_direction(readings, "rotate_left")
-    if no_new_steps >= config.scan_after_no_new_steps:
-        return "rotate_left" if left > right else "rotate_right"
-    return "forward"
-
-
-def choose_turn_direction(readings: dict[str, int | None], last_turn: str) -> str:
+def choose_turn_direction(readings: dict[str, int | None], last_turn: str = "rotate_left") -> str:
     left = readings.get("left45") or 0
     right = readings.get("right45") or 0
     if abs(left - right) < 40:
@@ -309,100 +279,109 @@ def choose_turn_direction(readings: dict[str, int | None], last_turn: str) -> st
     return "rotate_left" if left > right else "rotate_right"
 
 
-def path_blocked(readings: dict[str, int | None], config: ExploreConfig) -> bool:
-    front = readings.get("front")
-    left = readings.get("left45")
-    right = readings.get("right45")
-    return (
-        (front is not None and front <= config.obstacle_mm)
-        or (left is not None and left <= config.side_obstacle_mm)
-        or (right is not None and right <= config.side_obstacle_mm)
-    )
-
-
-def path_clear(readings: dict[str, int | None], config: ExploreConfig) -> bool:
-    front = readings.get("front")
-    left = readings.get("left45")
-    right = readings.get("right45")
-    return (
-        front is not None
-        and front >= config.clear_front_mm
-        and (left is None or left >= config.clear_side_mm)
-        and (right is None or right >= config.clear_side_mm)
-    )
-
-
-def execute_action(
-    rig: ExploreRig,
-    action: str,
+def choose_wall_side(
+    readings: dict[str, int | None],
+    current_side: str | None,
     config: ExploreConfig,
-    last_turn: str,
-    cache: TofCache,
-) -> tuple[str, str]:
-    if action == "forward":
-        return drive_forward_segment(rig, config, cache, last_turn)
-    elif action == "rotate_left":
-        rotate_until_clear(rig, config, cache, "rotate_left")
-        return "rotate_left", "rotate_left"
-    elif action == "rotate_right":
-        rotate_until_clear(rig, config, cache, "rotate_right")
-        return "rotate_right", "rotate_right"
+) -> str | None:
+    if config.wall_side in {"left", "right"}:
+        return config.wall_side
+
+    left = readings.get("left45")
+    right = readings.get("right45")
+    left_seen = left is not None and left <= config.wall_detect_mm
+    right_seen = right is not None and right <= config.wall_detect_mm
+
+    if current_side and ((current_side == "left" and left_seen) or (current_side == "right" and right_seen)):
+        return current_side
+    if left_seen and right_seen:
+        return "left" if left <= right else "right"
+    if left_seen:
+        return "left"
+    if right_seen:
+        return "right"
+    return current_side
+
+
+def set_wheel_speeds(rig: ExploreRig, left_pwm: float, right_pwm: float) -> None:
+    if left_pwm >= 0:
+        rig.left.motor.forward(left_pwm)
     else:
-        raise ValueError(f"unknown action: {action}")
+        rig.left.motor.reverse(abs(left_pwm))
+
+    if right_pwm >= 0:
+        rig.right.motor.forward(right_pwm)
+    else:
+        rig.right.motor.reverse(abs(right_pwm))
 
 
-def drive_forward_segment(
-    rig: ExploreRig,
-    config: ExploreConfig,
-    cache: TofCache,
+def wall_follow_command(
+    readings: dict[str, int | None],
+    wall_side: str | None,
     last_turn: str,
-) -> tuple[str, str]:
-    started = monotonic()
-    readings = cache.update(rig)
-    if path_blocked(readings, config):
+    config: ExploreConfig,
+) -> tuple[str, float, float, str, str | None]:
+    front = readings.get("front")
+    left = readings.get("left45")
+    right = readings.get("right45")
+
+    if front is not None and front <= config.obstacle_mm:
         turn = choose_turn_direction(readings, last_turn)
-        rotate_until_clear(rig, config, cache, turn)
-        return f"avoid_{turn}", turn
+        pwm = config.turn_speed
+        return f"emergency_{turn}", -pwm if turn == "rotate_left" else pwm, pwm if turn == "rotate_left" else -pwm, turn, wall_side
 
-    rig.drive.forward(config.speed)
-    try:
-        while monotonic() - started < config.forward_segment_seconds:
-            sleep(config.sensor_check_seconds)
-            readings = cache.update(rig)
-            if path_blocked(readings, config):
-                rig.drive.coast()
-                turn = choose_turn_direction(readings, last_turn)
-                rotate_until_clear(rig, config, cache, turn)
-                return f"avoid_{turn}", turn
-        return "forward", last_turn
-    finally:
-        rig.drive.coast()
+    if left is not None and left <= config.side_obstacle_mm:
+        return "side_avoid_right", config.turn_speed, -config.turn_speed, "rotate_right", "left"
+    if right is not None and right <= config.side_obstacle_mm:
+        return "side_avoid_left", -config.turn_speed, config.turn_speed, "rotate_left", "right"
 
+    if front is not None and front <= config.front_turn_mm:
+        if wall_side == "left":
+            turn = "rotate_right"
+        elif wall_side == "right":
+            turn = "rotate_left"
+        else:
+            turn = choose_turn_direction(readings, last_turn)
+        pwm = config.turn_speed
+        return f"front_{turn}", -pwm if turn == "rotate_left" else pwm, pwm if turn == "rotate_left" else -pwm, turn, wall_side
 
-def rotate_until_clear(
-    rig: ExploreRig,
-    config: ExploreConfig,
-    cache: TofCache,
-    direction: str,
-) -> None:
-    started = monotonic()
-    if direction == "rotate_left":
-        rig.drive.rotate_left(config.turn_speed)
+    follow_side = choose_wall_side(readings, wall_side, config)
+    if follow_side is None:
+        # No wall acquired yet. Arc left slowly so the robot eventually catches a wall instead of roaming randomly.
+        left_pwm = config.speed * 0.72
+        right_pwm = min(config.speed + config.max_steer * 0.5, config.speed + config.max_steer)
+        return "search_wall", left_pwm, right_pwm, last_turn, follow_side
+
+    wall_reading = left if follow_side == "left" else right
+    if wall_reading is None:
+        if follow_side == "left":
+            return "reacquire_left", config.speed * 0.65, config.speed + config.max_steer, "rotate_left", follow_side
+        return "reacquire_right", config.speed + config.max_steer, config.speed * 0.65, "rotate_right", follow_side
+
+    error_mm = wall_reading - config.wall_target_mm
+    if abs(error_mm) <= config.wall_deadband_mm:
+        steer = 0.0
     else:
-        rig.drive.rotate_right(config.turn_speed)
-    try:
-        while monotonic() - started < config.max_turn_seconds:
-            sleep(config.turn_check_seconds)
-            readings = cache.update(rig)
-            if path_clear(readings, config):
-                return
-    finally:
-        rig.drive.coast()
-        sleep(config.settle_seconds)
+        steer = clamp(error_mm * config.wall_gain, -config.max_steer, config.max_steer)
+
+    if follow_side == "left":
+        left_pwm = config.speed - steer
+        right_pwm = config.speed + steer
+    else:
+        left_pwm = config.speed + steer
+        right_pwm = config.speed - steer
+
+    return (
+        f"follow_{follow_side}",
+        clamp(left_pwm, 0.0, config.speed + config.max_steer),
+        clamp(right_pwm, 0.0, config.speed + config.max_steer),
+        last_turn,
+        follow_side,
+    )
 
 
 def run_explore(config: ExploreConfig) -> None:
-    validate_motor_voltage(config.speed, config.supply_voltage, config.motor_voltage_limit)
+    validate_motor_voltage(config.speed + config.max_steer, config.supply_voltage, config.motor_voltage_limit)
     validate_motor_voltage(config.turn_speed, config.supply_voltage, config.motor_voltage_limit)
 
     rig = ExploreRig(config)
@@ -413,11 +392,12 @@ def run_explore(config: ExploreConfig) -> None:
     previous_left = 0
     previous_right = 0
     no_new_steps = 0
-    stuck_turns = 0
     last_turn = "rotate_left"
+    wall_side: str | None = config.wall_side if config.wall_side in {"left", "right"} else None
     tof_cache = TofCache()
     stop_reason = "max_steps"
     started_at = monotonic()
+    last_log_at = 0.0
 
     try:
         rig.enable()
@@ -434,12 +414,7 @@ def run_explore(config: ExploreConfig) -> None:
                 stop_reason = "no_new_cells"
                 break
 
-            readings_before = tof_cache.update(rig)
-            action = choose_action(readings_before, no_new_steps, config)
-            if action.startswith("rotate"):
-                action = choose_turn_direction(readings_before, last_turn)
-            executed_action, last_turn = execute_action(rig, action, config, last_turn, tof_cache)
-
+            readings = tof_cache.update(rig)
             left_sample = rig.left.encoder.sample()
             right_sample = rig.right.encoder.sample()
             previous_left, previous_right = update_pose(
@@ -451,28 +426,24 @@ def run_explore(config: ExploreConfig) -> None:
                 config,
             )
 
-            elapsed = monotonic() - started_at
-            readings = tof_cache.update(rig)
             new_cells = integrate_readings(grid, pose, readings, config, points, elapsed)
             no_new_steps = no_new_steps + 1 if new_cells == 0 else 0
-            front_after = readings.get("front")
-            if (
-                executed_action.startswith("rotate")
-                and front_after is not None
-                and front_after <= config.obstacle_mm
-            ):
-                stuck_turns += 1
-            else:
-                stuck_turns = 0
-            if stuck_turns >= 6:
-                last_turn = "rotate_right" if last_turn == "rotate_left" else "rotate_left"
-                no_new_steps = max(no_new_steps, config.scan_after_no_new_steps)
-                stuck_turns = 0
+            action, left_pwm, right_pwm, last_turn, wall_side = wall_follow_command(
+                readings,
+                wall_side,
+                last_turn,
+                config,
+            )
+            set_wheel_speeds(rig, left_pwm, right_pwm)
+
             path.append(
                 {
                     "step": step,
                     "t_s": elapsed,
-                    "action": executed_action,
+                    "action": action,
+                    "wall_side": wall_side,
+                    "left_pwm": left_pwm,
+                    "right_pwm": right_pwm,
                     "x_mm": pose.x_mm,
                     "y_mm": pose.y_mm,
                     "theta_rad": pose.theta_rad,
@@ -488,15 +459,20 @@ def run_explore(config: ExploreConfig) -> None:
                     "back_mm": readings.get("back"),
                 }
             )
-            print(
-                f"step={step:03d} action={executed_action:<15} new={new_cells:03d} "
-                f"no_new={no_new_steps:02d} cells={len(grid.free) + len(grid.occupied):04d} "
-                f"pose=({pose.x_mm:7.1f},{pose.y_mm:7.1f},{math.degrees(pose.theta_rad):6.1f}deg) "
-                f"front={readings.get('front')} left45={readings.get('left45')} "
-                f"right45={readings.get('right45')} back={readings.get('back')}",
-                flush=True,
-            )
+            if elapsed - last_log_at >= config.log_interval_seconds:
+                last_log_at = elapsed
+                print(
+                    f"step={step:04d} action={action:<17} wall={wall_side or 'none':<5} "
+                    f"pwm=({left_pwm:.3f},{right_pwm:.3f}) new={new_cells:03d} "
+                    f"no_new={no_new_steps:03d} cells={len(grid.free) + len(grid.occupied):04d} "
+                    f"pose=({pose.x_mm:7.1f},{pose.y_mm:7.1f},{math.degrees(pose.theta_rad):6.1f}deg) "
+                    f"front={readings.get('front')} left45={readings.get('left45')} "
+                    f"right45={readings.get('right45')} back={readings.get('back')}",
+                    flush=True,
+                )
+            sleep(config.loop_seconds)
     finally:
+        rig.drive.coast()
         rig.close()
 
     write_outputs(config, grid, path, points, stop_reason)
@@ -674,21 +650,22 @@ def render_html(payload: dict[str, object]) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Explore until no new TOF grid cells are discovered.")
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/explore/latest"))
-    parser.add_argument("--speed", type=float, default=0.13)
-    parser.add_argument("--turn-speed", type=float, default=0.13)
-    parser.add_argument("--forward-segment-seconds", type=float, default=3.0)
-    parser.add_argument("--turn-check-seconds", type=float, default=0.04)
-    parser.add_argument("--max-turn-seconds", type=float, default=1.2)
-    parser.add_argument("--sensor-check-seconds", type=float, default=0.03)
-    parser.add_argument("--settle-seconds", type=float, default=0.05)
-    parser.add_argument("--max-steps", type=int, default=300)
+    parser.add_argument("--speed", type=float, default=0.16)
+    parser.add_argument("--turn-speed", type=float, default=0.15)
+    parser.add_argument("--loop-seconds", type=float, default=0.05)
+    parser.add_argument("--log-interval-seconds", type=float, default=0.5)
+    parser.add_argument("--max-steps", type=int, default=3600)
     parser.add_argument("--max-seconds", type=float, default=180.0)
-    parser.add_argument("--stop-after-no-new-steps", type=int, default=35)
-    parser.add_argument("--scan-after-no-new-steps", type=int, default=8)
+    parser.add_argument("--stop-after-no-new-steps", type=int, default=400)
     parser.add_argument("--obstacle-mm", type=int, default=40)
     parser.add_argument("--side-obstacle-mm", type=int, default=70)
-    parser.add_argument("--clear-front-mm", type=int, default=140)
-    parser.add_argument("--clear-side-mm", type=int, default=90)
+    parser.add_argument("--front-turn-mm", type=int, default=180)
+    parser.add_argument("--wall-side", choices=("auto", "left", "right"), default="auto")
+    parser.add_argument("--wall-target-mm", type=int, default=160)
+    parser.add_argument("--wall-deadband-mm", type=int, default=25)
+    parser.add_argument("--wall-detect-mm", type=int, default=700)
+    parser.add_argument("--wall-gain", type=float, default=0.0016)
+    parser.add_argument("--max-steer", type=float, default=0.055)
     parser.add_argument("--min-valid-tof-mm", type=int, default=40)
     parser.add_argument("--max-valid-tof-mm", type=int, default=3000)
     parser.add_argument("--cell-size-mm", type=int, default=50)
@@ -724,10 +701,14 @@ def parse_args() -> argparse.Namespace:
 def build_config(args: argparse.Namespace) -> ExploreConfig:
     if args.speed <= 0 or args.turn_speed <= 0:
         raise ValueError("--speed and --turn-speed must be greater than zero")
+    if args.loop_seconds <= 0:
+        raise ValueError("--loop-seconds must be greater than zero")
     if args.cell_size_mm <= 0 or args.ray_step_mm <= 0:
         raise ValueError("--cell-size-mm and --ray-step-mm must be greater than zero")
     if args.stop_after_no_new_steps <= 0:
         raise ValueError("--stop-after-no-new-steps must be greater than zero")
+    if args.max_steer < 0:
+        raise ValueError("--max-steer cannot be negative")
 
     return ExploreConfig(
         left=WheelPins(
@@ -742,19 +723,20 @@ def build_config(args: argparse.Namespace) -> ExploreConfig:
         output_dir=args.output_dir,
         speed=args.speed,
         turn_speed=args.turn_speed,
-        forward_segment_seconds=args.forward_segment_seconds,
-        turn_check_seconds=args.turn_check_seconds,
-        max_turn_seconds=args.max_turn_seconds,
-        sensor_check_seconds=args.sensor_check_seconds,
-        settle_seconds=args.settle_seconds,
+        loop_seconds=args.loop_seconds,
+        log_interval_seconds=args.log_interval_seconds,
         max_steps=args.max_steps,
         max_seconds=args.max_seconds,
         stop_after_no_new_steps=args.stop_after_no_new_steps,
-        scan_after_no_new_steps=args.scan_after_no_new_steps,
         obstacle_mm=args.obstacle_mm,
         side_obstacle_mm=args.side_obstacle_mm,
-        clear_front_mm=args.clear_front_mm,
-        clear_side_mm=args.clear_side_mm,
+        front_turn_mm=args.front_turn_mm,
+        wall_side=args.wall_side,
+        wall_target_mm=args.wall_target_mm,
+        wall_deadband_mm=args.wall_deadband_mm,
+        wall_detect_mm=args.wall_detect_mm,
+        wall_gain=args.wall_gain,
+        max_steer=args.max_steer,
         min_valid_tof_mm=args.min_valid_tof_mm,
         max_valid_tof_mm=args.max_valid_tof_mm,
         cell_size_mm=args.cell_size_mm,
