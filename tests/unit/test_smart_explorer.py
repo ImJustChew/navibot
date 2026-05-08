@@ -48,3 +48,24 @@ def test_occupancy_grid_to_dict_includes_penalized() -> None:
     d = grid.to_dict()
     assert "penalized" in d
     assert [0, 0] in d["penalized"]
+
+
+ExploreState = _mod.ExploreState
+StateContext = _mod.StateContext
+
+
+def test_explore_state_has_required_values() -> None:
+    assert hasattr(ExploreState, "FORWARD")
+    assert hasattr(ExploreState, "TURNING")
+    assert hasattr(ExploreState, "REVERSING")
+    assert hasattr(ExploreState, "ASSESS")
+    assert hasattr(ExploreState, "ESCAPE")
+    assert hasattr(ExploreState, "DONE")
+
+
+def test_state_context_defaults() -> None:
+    ctx = StateContext(state=ExploreState.FORWARD)
+    assert ctx.stall_triggered is False
+    assert ctx.post_reversal is False
+    assert ctx.total_rotated == 0.0
+    assert ctx.assess_ticks_remaining == 0

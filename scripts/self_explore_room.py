@@ -16,6 +16,7 @@ cells recently, and stops after sustained no-new-coverage.
 from __future__ import annotations
 
 import argparse
+import enum
 import json
 import math
 import random
@@ -101,6 +102,37 @@ class MapPoint:
     sensor: str
     distance_mm: int
     t_s: float
+
+
+class ExploreState(enum.Enum):
+    FORWARD = "forward"
+    TURNING = "turning"
+    REVERSING = "reversing"
+    ASSESS = "assess"
+    ESCAPE = "escape"
+    DONE = "done"
+
+
+@dataclass
+class StateContext:
+    state: ExploreState
+    # TURNING
+    turn_start_theta: float = 0.0
+    total_rotated: float = 0.0
+    turn_direction: str = "rotate_left"
+    # REVERSING
+    reverse_start_x: float = 0.0
+    reverse_start_y: float = 0.0
+    # ASSESS
+    stall_triggered: bool = False
+    assess_ticks_remaining: int = 0
+    post_reversal: bool = False
+    # ESCAPE
+    escape_until: float = 0.0
+    escape_initialized: bool = False
+    # RANDOM WALK
+    random_walk_remaining: int = 0
+    random_walk_heading: float = 0.0
 
 
 class OccupancyGrid:
