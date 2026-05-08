@@ -92,6 +92,12 @@ python3 scripts/battery_guard.py
 
 Use `--dry-run` only for threshold testing; the default behavior powers off on sustained critical battery voltage.
 
+Install the battery guard as a boot service on the Raspberry Pi:
+
+```bash
+bash scripts/install_battery_guard_service.sh
+```
+
 Unified robot status:
 
 ```bash

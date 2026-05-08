@@ -1,0 +1,17 @@
+[Unit]
+Description=Navibot battery guard
+After=network.target
+
+[Service]
+Type=simple
+User=vroom
+Group=vroom
+WorkingDirectory=/home/vroom/navibot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/vroom/navibot/scripts/battery_guard.py --critical-voltage 6.2 --critical-seconds 30
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+

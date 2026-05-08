@@ -78,6 +78,20 @@ python3 scripts/battery_guard.py --critical-voltage 6.2 --critical-seconds 30
 
 The guard ignores low voltage while the INA219 reports negative current, because that indicates charging/backfeed. The same `BatteryMonitor` subsystem is used by the robot status loop.
 
+Install as a systemd service:
+
+```bash
+bash scripts/install_battery_guard_service.sh
+```
+
+Useful service commands:
+
+```bash
+sudo systemctl status navibot-battery-guard
+sudo journalctl -u navibot-battery-guard -f
+sudo systemctl restart navibot-battery-guard
+```
+
 Observed baseline behavior:
 
 - Normal robot draw is positive current. In one idle/running sample, the bus was about `6.48 V`, current was about `+0.44 A`, and power was about `2.85 W`.
