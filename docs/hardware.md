@@ -46,6 +46,23 @@ Outputs:
 
 This test assumes a rough wheel track of `105 mm` and gear ratio `105.6`. Calibrate those values before treating the map as accurate.
 
+## Self Exploration Map Test
+
+`scripts/self_explore_room.py` is a more autonomous room exploration proof. It maintains a simple occupancy grid from TOF rays, records encoder odometry, and stops when it has not discovered new grid cells for a sustained period.
+
+Run in a clear, supervised test area:
+
+```bash
+python3 scripts/self_explore_room.py --max-seconds 180 --max-steps 300 --speed 0.13 --turn-speed 0.13
+```
+
+Outputs are written to `artifacts/explore/latest`:
+
+- `map.json`: metadata, occupancy grid, robot path, and TOF hit points.
+- `map.html`: standalone canvas viewer for the map.
+
+This is still not full SLAM. It is a demonstration of cautious self-navigation, encoder odometry, TOF coverage, and map artifact generation.
+
 ## INA219 Current Sensor
 
 The INA219 current sensor is on I2C address `0x40`.
