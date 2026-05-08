@@ -28,6 +28,24 @@ python3 scripts/vl53l1x_xshut_read.py
 
 Override mappings with repeated `--sensor name:xshut_gpio:i2c_address` arguments.
 
+## TOF Mapping Drive Test
+
+`scripts/tof_mapping_drive_test.py` is an early self-navigation proof. It is not full SLAM. It drives in short cautious pulses, estimates pose from wheel encoders, projects TOF readings into a 2D point map, and writes artifacts to `artifacts/maps/latest`.
+
+Run in a clear test area:
+
+```bash
+python3 scripts/tof_mapping_drive_test.py --max-steps 120 --max-seconds 60 --speed 0.14 --turn-speed 0.14
+```
+
+Outputs:
+
+- `map.json`: metadata, robot path, and projected TOF points.
+- `points.csv`: projected obstacle points.
+- `path.csv`: robot pose and sensor readings per step.
+
+This test assumes a rough wheel track of `105 mm` and gear ratio `105.6`. Calibrate those values before treating the map as accurate.
+
 ## INA219 Current Sensor
 
 The INA219 current sensor is on I2C address `0x40`.
