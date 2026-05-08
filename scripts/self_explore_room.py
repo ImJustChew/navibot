@@ -624,8 +624,9 @@ def run_explore(config: ExploreConfig) -> None:
                     commanded_pwm=max(abs(left_pwm), abs(right_pwm)),
                     actual_delta=actual_delta,
                 )
-                if stalled or detect_dead_end(readings, config.obstacle_mm, config.dead_end_side_mm):
-                    if detect_dead_end(readings, config.obstacle_mm, config.dead_end_side_mm):
+                dead_end = detect_dead_end(readings, config.obstacle_mm, config.dead_end_side_mm)
+                if stalled or dead_end:
+                    if dead_end:
                         grid.mark_penalized(pose.x_mm, pose.y_mm)
                         frontier_cache.invalidate()
                     ctx.state = ExploreState.ASSESS
