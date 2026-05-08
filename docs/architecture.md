@@ -18,6 +18,10 @@ Navibot is organized around replaceable Python components so robot logic can be 
 - `navibot.robot.encoders`: direct `lgpio` quadrature encoder callbacks and signed count samples.
 - `navibot.sensors.vl53l1x_array`: XSHUT-based VL53L1X address assignment and array readings.
 - `navibot.sensors.ina219`: INA219 power/current readings and charging direction helper.
+- `navibot.robot.pose`: differential-drive odometry and pose helpers.
+- `navibot.robot.safety`: local safety evaluation for obstacle and battery thresholds.
+- `navibot.robot.state`: structured robot telemetry state for APIs, logs, and cloud sync.
+- `navibot.robot.hardware`: read-only hardware composition that produces `RobotState`.
 
 Hardware scripts in `scripts/` should stay thin wrappers around these modules so the future robot runtime and web server use the same tested driver code.
 

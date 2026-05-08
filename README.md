@@ -83,3 +83,9 @@ INA219 current sensor:
 ```bash
 python3 scripts/ina219_read.py
 ```
+
+Unified robot status:
+
+```bash
+python3 scripts/robot_status_loop.py --pretty
+```
