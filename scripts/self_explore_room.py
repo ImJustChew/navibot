@@ -468,38 +468,6 @@ def integrate_readings(
     return new_cells
 
 
-def choose_turn_direction(readings: dict[str, int | None], last_turn: str = "rotate_left") -> str:
-    left = readings.get("left45") or 0
-    right = readings.get("right45") or 0
-    if abs(left - right) < 40:
-        return last_turn
-    return "rotate_left" if left > right else "rotate_right"
-
-
-def choose_wall_side(
-    readings: dict[str, int | None],
-    current_side: str | None,
-    config: ExploreConfig,
-) -> str | None:
-    if config.wall_side in {"left", "right"}:
-        return config.wall_side
-
-    left = readings.get("left45")
-    right = readings.get("right45")
-    left_seen = left is not None and left <= config.wall_detect_mm
-    right_seen = right is not None and right <= config.wall_detect_mm
-
-    if current_side and ((current_side == "left" and left_seen) or (current_side == "right" and right_seen)):
-        return current_side
-    if left_seen and right_seen:
-        return "left" if left <= right else "right"
-    if left_seen:
-        return "left"
-    if right_seen:
-        return "right"
-    return current_side
-
-
 def set_wheel_speeds(rig: ExploreRig, left_pwm: float, right_pwm: float) -> None:
     if left_pwm >= 0:
         rig.left.motor.forward(left_pwm)
@@ -518,88 +486,76 @@ def forward_pwm(value: float, config: ExploreConfig) -> float:
     return clamp(value, config.min_forward_pwm, config.speed + config.max_steer)
 
 
-def forward_arc(
-    action: str,
-    turn: str,
-    wall_side: str | None,
-    last_turn: str,
-    config: ExploreConfig,
-) -> tuple[str, float, float, str, str | None]:
-    slow = min(config.arc_slow_pwm, config.speed)
-    fast = min(config.speed + config.max_steer, config.motor_voltage_limit / config.supply_voltage)
-    if turn == "rotate_left":
-        return action, slow, fast, "rotate_left", wall_side
-    return action, fast, slow, "rotate_right", wall_side
+def distance_between(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-def wall_follow_command(
+def _forward_command(
     readings: dict[str, int | None],
-    wall_side: str | None,
+    frontier_heading: float | None,
+    pose: Pose,
     last_turn: str,
     config: ExploreConfig,
-) -> tuple[str, float, float, str, str | None]:
+) -> tuple[float, float, str, str]:
+    """Return (left_pwm, right_pwm, action, last_turn) for FORWARD state."""
     front = readings.get("front")
     left = readings.get("left45")
     right = readings.get("right45")
 
-    if front is not None and front <= config.obstacle_mm:
-        turn = choose_turn_direction(readings, last_turn)
-        pwm = config.turn_speed
-        return f"emergency_{turn}", -pwm if turn == "rotate_left" else pwm, pwm if turn == "rotate_left" else -pwm, turn, wall_side
-
+    # Side obstacle avoidance
     if left is not None and left <= config.side_obstacle_mm:
-        return forward_arc("side_avoid_right", "rotate_right", "left", last_turn, config)
+        steer = config.max_steer
+        return (
+            forward_pwm(config.speed - steer, config),
+            forward_pwm(config.speed + steer, config),
+            "side_avoid_right", "rotate_right",
+        )
     if right is not None and right <= config.side_obstacle_mm:
-        return forward_arc("side_avoid_left", "rotate_left", "right", last_turn, config)
+        steer = config.max_steer
+        return (
+            forward_pwm(config.speed + steer, config),
+            forward_pwm(config.speed - steer, config),
+            "side_avoid_left", "rotate_left",
+        )
 
-    if front is not None and front <= config.front_turn_mm:
-        if wall_side == "left":
-            turn = "rotate_right"
-        elif wall_side == "right":
-            turn = "rotate_left"
-        else:
-            turn = choose_turn_direction(readings, last_turn)
-        return forward_arc(f"front_{turn}", turn, wall_side, last_turn, config)
+    # Wall following
+    follow_side: str | None = None
+    if left is not None and left <= config.wall_detect_mm:
+        follow_side = "left"
+    if right is not None and right <= config.wall_detect_mm:
+        if follow_side is None or right < (left or 9999):
+            follow_side = "right"
 
-    follow_side = choose_wall_side(readings, wall_side, config)
-    if follow_side is None:
-        return "search_forward", config.speed, config.speed, last_turn, follow_side
+    if follow_side is not None:
+        wall_reading = left if follow_side == "left" else right
+        if wall_reading is not None:
+            error_mm = wall_reading - config.wall_target_mm
+            steer = 0.0 if abs(error_mm) <= config.wall_deadband_mm else clamp(
+                error_mm * config.wall_gain, -config.max_steer, config.max_steer
+            )
+            if follow_side == "left":
+                lp = forward_pwm(config.speed - steer, config)
+                rp = forward_pwm(config.speed + steer, config)
+            else:
+                lp = forward_pwm(config.speed + steer, config)
+                rp = forward_pwm(config.speed - steer, config)
+            return lp, rp, f"follow_{follow_side}", last_turn
 
-    wall_reading = left if follow_side == "left" else right
-    if wall_reading is None:
-        if follow_side == "left":
-            return forward_arc("reacquire_left", "rotate_left", follow_side, last_turn, config)
-        return forward_arc("reacquire_right", "rotate_right", follow_side, last_turn, config)
+    # Open space: gentle frontier steer
+    if frontier_heading is not None:
+        angular_error = normalize_angle(frontier_heading - pose.theta_rad)
+        frontier_steer = clamp(config.frontier_gain * angular_error, -config.max_steer, config.max_steer)
+        lp = forward_pwm(config.speed - frontier_steer, config)
+        rp = forward_pwm(config.speed + frontier_steer, config)
+        return lp, rp, "frontier_steer", last_turn
 
-    error_mm = wall_reading - config.wall_target_mm
-    if abs(error_mm) <= config.wall_deadband_mm:
-        steer = 0.0
-    else:
-        steer = clamp(error_mm * config.wall_gain, -config.max_steer, config.max_steer)
-
-    if follow_side == "left":
-        left_pwm = config.speed - steer
-        right_pwm = config.speed + steer
-    else:
-        left_pwm = config.speed + steer
-        right_pwm = config.speed - steer
-
-    return (
-        f"follow_{follow_side}",
-        forward_pwm(left_pwm, config),
-        forward_pwm(right_pwm, config),
-        last_turn,
-        follow_side,
-    )
-
-
-def distance_between(a: tuple[float, float], b: tuple[float, float]) -> float:
-    return math.hypot(a[0] - b[0], a[1] - b[1])
+    return config.speed, config.speed, "search_forward", last_turn
 
 
 def run_explore(config: ExploreConfig) -> None:
     validate_motor_voltage(config.speed + config.max_steer, config.supply_voltage, config.motor_voltage_limit)
     validate_motor_voltage(config.turn_speed, config.supply_voltage, config.motor_voltage_limit)
+    validate_motor_voltage(config.reverse_speed, config.supply_voltage, config.motor_voltage_limit)
 
     rig = ExploreRig(config)
     grid = OccupancyGrid(config.cell_size_mm)
@@ -610,15 +566,23 @@ def run_explore(config: ExploreConfig) -> None:
     previous_right = 0
     no_new_steps = 0
     last_turn = "rotate_left"
-    wall_side: str | None = config.wall_side if config.wall_side in {"left", "right"} else None
     tof_cache = TofCache()
+    stall_detector = StallDetector(
+        min_pwm=config.stall_detect_min_pwm,
+        min_counts=config.stall_min_counts_per_step,
+        threshold_steps=config.stall_threshold_steps,
+    )
+    frontier_cache = FrontierCache(update_steps=config.frontier_update_steps)
+    ctx = StateContext(
+        state=ExploreState.FORWARD,
+        assess_ticks_remaining=0,
+    )
     stop_reason = "max_steps"
     started_at = monotonic()
     last_log_at = 0.0
-    stuck_anchor_time = 0.0
-    stuck_anchor_xy = (0.0, 0.0)
-    escape_until = 0.0
-    escape_turn = "rotate_left"
+    left_pwm = 0.0
+    right_pwm = 0.0
+    action = "init"
 
     try:
         rig.enable()
@@ -628,82 +592,170 @@ def run_explore(config: ExploreConfig) -> None:
 
         for step in range(config.max_steps):
             elapsed = monotonic() - started_at
+
+            # --- termination checks ---
             if elapsed >= config.max_seconds:
                 stop_reason = "max_seconds"
                 break
             if no_new_steps >= config.stop_after_no_new_steps:
                 stop_reason = "no_new_cells"
                 break
+            if ctx.state == ExploreState.DONE:
+                stop_reason = "done"
+                break
 
+            # --- sensor + odometry ---
             readings = tof_cache.update(rig)
             left_sample = rig.left.encoder.sample()
             right_sample = rig.right.encoder.sample()
+            actual_delta = abs(left_sample.counts - previous_left) + abs(right_sample.counts - previous_right)
             previous_left, previous_right = update_pose(
-                pose,
-                previous_left,
-                previous_right,
-                left_sample.counts,
-                right_sample.counts,
-                config,
+                pose, previous_left, previous_right,
+                left_sample.counts, right_sample.counts, config,
             )
-
             new_cells = integrate_readings(grid, pose, readings, config, points, elapsed)
-            no_new_steps = no_new_steps + 1 if new_cells == 0 else 0
-            if elapsed - stuck_anchor_time >= config.stuck_window_seconds:
-                moved_mm = distance_between(stuck_anchor_xy, (pose.x_mm, pose.y_mm))
-                if moved_mm < config.stuck_distance_mm:
-                    escape_until = elapsed + config.escape_seconds
-                    escape_turn = random.choice(("rotate_left", "rotate_right"))
-                    wall_side = None
-                stuck_anchor_time = elapsed
-                stuck_anchor_xy = (pose.x_mm, pose.y_mm)
+            no_new_steps = 0 if new_cells > 0 else no_new_steps + 1
 
-            if elapsed < escape_until:
-                action, left_pwm, right_pwm, last_turn, wall_side = forward_arc(
-                    f"escape_{escape_turn}",
-                    escape_turn,
-                    None,
-                    last_turn,
-                    config,
+            frontier_heading = frontier_cache.get(step, grid, pose)
+
+            # --- state machine ---
+            if ctx.state == ExploreState.FORWARD:
+                stalled = stall_detector.update(
+                    commanded_pwm=max(abs(left_pwm), abs(right_pwm)),
+                    actual_delta=actual_delta,
                 )
-            else:
-                action, left_pwm, right_pwm, last_turn, wall_side = wall_follow_command(
-                    readings,
-                    wall_side,
-                    last_turn,
-                    config,
-                )
+                if stalled or detect_dead_end(readings, config.obstacle_mm, config.dead_end_side_mm):
+                    if detect_dead_end(readings, config.obstacle_mm, config.dead_end_side_mm):
+                        grid.mark_penalized(pose.x_mm, pose.y_mm)
+                        frontier_cache.invalidate()
+                    ctx.state = ExploreState.ASSESS
+                    ctx.stall_triggered = stalled
+                    ctx.assess_ticks_remaining = config.assess_steps
+                    left_pwm, right_pwm = 0.0, 0.0
+                    action = "assess_entry"
+                else:
+                    front = readings.get("front")
+                    if front is not None and front < config.front_turn_mm:
+                        ctx.state = ExploreState.ASSESS
+                        ctx.assess_ticks_remaining = config.assess_steps
+                        left_pwm, right_pwm = 0.0, 0.0
+                        action = "assess_entry"
+                    else:
+                        left_pwm, right_pwm, action, last_turn = _forward_command(
+                            readings, frontier_heading, pose, last_turn, config,
+                        )
+
+            elif ctx.state == ExploreState.ASSESS:
+                tick_assess(ctx, readings, config, actual_delta)
+                left_pwm, right_pwm = 0.0, 0.0
+                action = f"assess({ctx.state.value})"
+                if ctx.state == ExploreState.TURNING:
+                    turn_dir = choose_turn_biased(readings, frontier_heading, pose.theta_rad, last_turn)
+                    ctx.turn_start_theta = pose.theta_rad
+                    ctx.total_rotated = 0.0
+                    ctx.turn_direction = turn_dir
+                    last_turn = turn_dir
+                elif ctx.state == ExploreState.REVERSING:
+                    ctx.reverse_start_x = pose.x_mm
+                    ctx.reverse_start_y = pose.y_mm
+                    ctx.turn_start_theta = pose.theta_rad  # used for heading correction
+
+            elif ctx.state == ExploreState.TURNING:
+                dtheta = normalize_angle(pose.theta_rad - ctx.turn_start_theta)
+                ctx.total_rotated += abs(dtheta)
+                ctx.turn_start_theta = pose.theta_rad
+                front = readings.get("front")
+                min_turn_rad = math.radians(30)
+                if ctx.total_rotated >= 2 * math.pi:
+                    # full rotation — no clear path — reverse
+                    ctx.state = ExploreState.ASSESS
+                    ctx.post_reversal = False
+                    ctx.assess_ticks_remaining = config.assess_steps
+                    left_pwm, right_pwm = 0.0, 0.0
+                    action = "full_rotation_assess"
+                elif front is not None and front >= config.front_clear_mm and ctx.total_rotated >= min_turn_rad:
+                    ctx.state = ExploreState.FORWARD
+                    stall_detector.reset()
+                    left_pwm, right_pwm = 0.0, 0.0
+                    action = "turn_done"
+                else:
+                    pwm = config.turn_speed
+                    if ctx.turn_direction == "rotate_left":
+                        left_pwm, right_pwm = -pwm, pwm
+                    else:
+                        left_pwm, right_pwm = pwm, -pwm
+                    action = f"turning_{ctx.turn_direction}"
+
+            elif ctx.state == ExploreState.REVERSING:
+                left_pwm, right_pwm = tick_reversing(ctx, pose, readings, config)
+                action = "reversing"
+
+            elif ctx.state == ExploreState.ESCAPE:
+                if not ctx.escape_initialized:
+                    ctx.escape_until = elapsed + config.escape_seconds
+                    ctx.escape_initialized = True
+                    stall_detector.reset()
+                if elapsed >= ctx.escape_until:
+                    ctx.state = ExploreState.ASSESS
+                    ctx.assess_ticks_remaining = config.assess_steps
+                    ctx.escape_initialized = False
+                    left_pwm, right_pwm = 0.0, 0.0
+                    action = "escape_done"
+                else:
+                    left_pwm, right_pwm = -config.reverse_speed, -config.reverse_speed
+                    action = "escape_reversing"
+
+            # random walk fallback: no frontiers and not done
+            if frontier_heading is None and ctx.state == ExploreState.FORWARD and no_new_steps > 20:
+                if ctx.random_walk_remaining > 0:
+                    ctx.random_walk_remaining -= 1
+                    if ctx.random_walk_remaining == 0:
+                        frontier_cache.invalidate()
+                        if frontier_cache.get(step, grid, pose) is None:
+                            ctx.state = ExploreState.DONE
+                            stop_reason = "no_frontiers"
+                else:
+                    ctx.random_walk_remaining = config.random_walk_steps
+                    ctx.random_walk_heading = random.choice([
+                        0.0, math.pi / 4, math.pi / 2, 3 * math.pi / 4,
+                        math.pi, -3 * math.pi / 4, -math.pi / 2, -math.pi / 4,
+                    ])
+                    turn_dir = "rotate_left" if normalize_angle(ctx.random_walk_heading - pose.theta_rad) > 0 else "rotate_right"
+                    ctx.state = ExploreState.ASSESS
+                    ctx.turn_direction = turn_dir
+                    ctx.assess_ticks_remaining = config.assess_steps
+                    last_turn = turn_dir
+
             set_wheel_speeds(rig, left_pwm, right_pwm)
 
-            path.append(
-                {
-                    "step": step,
-                    "t_s": elapsed,
-                    "action": action,
-                    "wall_side": wall_side,
-                    "left_pwm": left_pwm,
-                    "right_pwm": right_pwm,
-                    "x_mm": pose.x_mm,
-                    "y_mm": pose.y_mm,
-                    "theta_rad": pose.theta_rad,
-                    "theta_deg": math.degrees(pose.theta_rad),
-                    "left_counts": left_sample.counts,
-                    "right_counts": right_sample.counts,
-                    "new_cells": new_cells,
-                    "free_cells": len(grid.free),
-                    "occupied_cells": len(grid.occupied),
-                    "front_mm": readings.get("front"),
-                    "left45_mm": readings.get("left45"),
-                    "right45_mm": readings.get("right45"),
-                    "back_mm": readings.get("back"),
-                }
-            )
+            path.append({
+                "step": step,
+                "t_s": elapsed,
+                "action": action,
+                "state": ctx.state.value,
+                "left_pwm": left_pwm,
+                "right_pwm": right_pwm,
+                "x_mm": pose.x_mm,
+                "y_mm": pose.y_mm,
+                "theta_rad": pose.theta_rad,
+                "theta_deg": math.degrees(pose.theta_rad),
+                "left_counts": left_sample.counts,
+                "right_counts": right_sample.counts,
+                "new_cells": new_cells,
+                "free_cells": len(grid.free),
+                "occupied_cells": len(grid.occupied),
+                "penalized_cells": len(grid.penalized),
+                "front_mm": readings.get("front"),
+                "left45_mm": readings.get("left45"),
+                "right45_mm": readings.get("right45"),
+                "back_mm": readings.get("back"),
+            })
             if elapsed - last_log_at >= config.log_interval_seconds:
                 last_log_at = elapsed
                 print(
-                    f"step={step:04d} action={action:<17} wall={wall_side or 'none':<5} "
+                    f"step={step:04d} state={ctx.state.value:<10} action={action:<20} "
                     f"pwm=({left_pwm:.3f},{right_pwm:.3f}) new={new_cells:03d} "
-                    f"no_new={no_new_steps:03d} cells={len(grid.free) + len(grid.occupied):04d} "
+                    f"no_new={no_new_steps:03d} cells={len(grid.free)+len(grid.occupied):04d} "
                     f"pose=({pose.x_mm:7.1f},{pose.y_mm:7.1f},{math.degrees(pose.theta_rad):6.1f}deg) "
                     f"front={readings.get('front')} left45={readings.get('left45')} "
                     f"right45={readings.get('right45')} back={readings.get('back')}",
