@@ -1,0 +1,399 @@
+{
+  "id": "f3d0decc-516f-4817-9faf-75337ed348dc",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.map_snapshots": {
+      "name": "map_snapshots",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "robot_id": {
+          "name": "robot_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resolution_mm": {
+          "name": "resolution_mm",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "map_robot_created_at_idx": {
+          "name": "map_robot_created_at_idx",
+          "columns": [
+            {
+              "expression": "robot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "map_snapshots_robot_id_robots_id_fk": {
+          "name": "map_snapshots_robot_id_robots_id_fk",
+          "tableFrom": "map_snapshots",
+          "tableTo": "robots",
+          "columnsFrom": [
+            "robot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.robot_commands": {
+      "name": "robot_commands",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "robot_id": {
+          "name": "robot_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'web'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "acknowledged_at": {
+          "name": "acknowledged_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "robot_commands_robot_status_idx": {
+          "name": "robot_commands_robot_status_idx",
+          "columns": [
+            {
+              "expression": "robot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "robot_commands_robot_id_robots_id_fk": {
+          "name": "robot_commands_robot_id_robots_id_fk",
+          "tableFrom": "robot_commands",
+          "tableTo": "robots",
+          "columnsFrom": [
+            "robot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.robots": {
+      "name": "robots",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "online": {
+          "name": "online",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'idle'"
+        },
+        "battery_voltage": {
+          "name": "battery_voltage",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "battery_percent": {
+          "name": "battery_percent",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "charging": {
+          "name": "charging",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.telemetry_samples": {
+      "name": "telemetry_samples",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "robot_id": {
+          "name": "robot_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "t_robot_seconds": {
+          "name": "t_robot_seconds",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "battery_voltage": {
+          "name": "battery_voltage",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "current_ma": {
+          "name": "current_ma",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "power_w": {
+          "name": "power_w",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pose": {
+          "name": "pose",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tof_mm": {
+          "name": "tof_mm",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "safety": {
+          "name": "safety",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "raw": {
+          "name": "raw",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "telemetry_robot_created_at_idx": {
+          "name": "telemetry_robot_created_at_idx",
+          "columns": [
+            {
+              "expression": "robot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "telemetry_samples_robot_id_robots_id_fk": {
+          "name": "telemetry_samples_robot_id_robots_id_fk",
+          "tableFrom": "telemetry_samples",
+          "tableTo": "robots",
+          "columnsFrom": [
+            "robot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

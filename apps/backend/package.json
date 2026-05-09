@@ -1,0 +1,27 @@
+{
+  "name": "@navibot/backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json && bun build src/index.ts --target=node --outdir=dist",
+    "typecheck": "tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.1",
+    "@hono/node-ws": "^1.0.4",
+    "@neondatabase/serverless": "^1.0.0",
+    "drizzle-orm": "^0.43.1",
+    "hono": "^4.7.9",
+    "nanoid": "^5.1.5",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.16",
+    "drizzle-kit": "^0.31.1",
+    "typescript": "^5.8.3"
+  }
+}

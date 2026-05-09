@@ -1,7 +1,5 @@
-def main() -> None:
-    print("Navibot robot runtime scaffold. Hardware drivers are not wired yet.")
+from navibot.cloud_agent import main
 
 
 if __name__ == "__main__":
     main()
-

@@ -1,0 +1,20 @@
+{
+  "name": "navibot-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/backend",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:backend": "bun run --cwd apps/backend dev",
+    "dev:web": "bun run --cwd apps/web dev",
+    "build": "bun run --cwd apps/backend build && bun run --cwd apps/web build",
+    "typecheck": "bun run --cwd apps/backend typecheck && bun run --cwd apps/web typecheck",
+    "db:generate": "bun run --cwd apps/backend db:generate",
+    "db:migrate": "bun run --cwd apps/backend db:migrate"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

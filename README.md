@@ -11,6 +11,8 @@ Python monorepo for a Raspberry Pi controlled robot with four time-of-flight sen
 - `src/navibot/control`: command models and robot control services.
 - `src/navibot/crypto`: encryption, pairing, and secure session primitives.
 - `src/navibot/server`: Python web server API and websocket entry points.
+- `apps/backend`: Hono cloud relay/API with Drizzle schema for Neon Postgres.
+- `apps/web`: Vite React remote-control portal for Vercel.
 - `apps/robot`: executable robot runtime entry point.
 - `apps/webserver`: executable web server entry point.
 - `web`: browser portal templates and static assets.
@@ -26,12 +28,23 @@ python -m pip install -e ".[dev,server,vision]"
 pytest
 ```
 
+Install Bun workspace dependencies for the Hono backend and Vite web portal:
+
+```powershell
+bun install
+bun run typecheck
+```
+
 ## Runtime Entry Points
 
 ```powershell
 python -m apps.robot
 python -m apps.webserver
+bun run dev:backend
+bun run dev:web
 ```
+
+Remote control deployment notes are in `docs/remote-control.md`.
 
 ## Raspberry Pi Hardware Tests
 
