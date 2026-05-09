@@ -185,18 +185,19 @@ app.get(
         await flushQueuedCommands(robotId);
       },
       async onMessage(event, ws) {
-        const raw = typeof event.data === "string" ? event.data : event.data.toString();
-        const message = JSON.parse(raw);
+        try {
+          const raw = typeof event.data === "string" ? event.data : event.data.toString();
+          const message = JSON.parse(raw);
 
-        if (message.kind === "hello") {
+          if (message.kind === "hello") {
           const hello = robotHelloSchema.parse(message);
           hub.connectRobot(robotId, hello.name ?? robotId, ws);
           await markRobotOnline(robotId, hello.name ?? robotId);
           await flushQueuedCommands(robotId);
           return;
-        }
+          }
 
-        if (message.kind === "telemetry") {
+          if (message.kind === "telemetry") {
           const telemetry = telemetryMessageSchema.parse(message);
           const state = telemetry.state;
           const power = (state.power ?? {}) as Record<string, unknown>;
@@ -251,10 +252,11 @@ app.get(
             state,
             at: telemetry.createdAt ?? new Date().toISOString(),
           });
+          console.log(`telemetry stored for robot ${robotId}`);
           return;
-        }
+          }
 
-        if (message.kind === "command_ack") {
+          if (message.kind === "command_ack") {
           const commandId = String(message.commandId);
           if (db) {
             await db
@@ -269,9 +271,9 @@ app.get(
             at: new Date().toISOString(),
           });
           return;
-        }
+          }
 
-        if (message.kind === "map_snapshot") {
+          if (message.kind === "map_snapshot") {
           const snapshot = mapSnapshotSchema.parse(message);
           if (db) {
             await db.insert(mapSnapshots).values({
@@ -282,6 +284,10 @@ app.get(
               payload: snapshot.payload,
             });
           }
+          }
+        } catch (error) {
+          console.error("robot websocket message failed", error);
+          ws.send(JSON.stringify({ kind: "error", message: "robot message rejected" }));
         }
       },
       async onClose(_event, ws) {

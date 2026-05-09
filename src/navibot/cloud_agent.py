@@ -149,7 +149,7 @@ async def run_agent(config: RobotAgentConfig) -> None:
             telemetry.start()
             if drive:
                 drive.start()
-            async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+            async with websockets.connect(url, open_timeout=60, ping_interval=20, ping_timeout=20) as ws:
                 await ws.send(
                     json.dumps(
                         {
