@@ -13,10 +13,10 @@ COPY apps/backend apps/backend
 COPY apps/web/package.json apps/web/package.json
 RUN bun run --cwd apps/backend build
 
-FROM oven/bun:1.3.4-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/apps/backend/dist dist
 COPY --from=build /app/apps/backend/package.json package.json
 COPY --from=deps /app/node_modules node_modules
-CMD ["bun", "dist/index.js"]
+CMD ["node", "dist/index.js"]
