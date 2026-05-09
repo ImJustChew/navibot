@@ -37,6 +37,21 @@ if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
   fi
 fi
 
+missing_apt_packages=()
+command -v swig >/dev/null 2>&1 || missing_apt_packages+=("swig")
+command -v gcc >/dev/null 2>&1 || missing_apt_packages+=("build-essential")
+[[ -f "/usr/include/python$(python3 - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)/Python.h" ]] || missing_apt_packages+=("python3-dev")
+
+if (( ${#missing_apt_packages[@]} > 0 )); then
+  echo "Installing native Python build prerequisites: ${missing_apt_packages[*]}" >&2
+  sudo apt-get update
+  sudo apt-get install -y "${missing_apt_packages[@]}"
+fi
+
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip
 "${VENV_DIR}/bin/python" -m pip install -e "${REPO_DIR}[rpi]"
 
