@@ -40,6 +40,7 @@ fi
 missing_apt_packages=()
 command -v swig >/dev/null 2>&1 || missing_apt_packages+=("swig")
 command -v gcc >/dev/null 2>&1 || missing_apt_packages+=("build-essential")
+[[ -f /usr/lib/aarch64-linux-gnu/liblgpio.so || -f /usr/lib/arm-linux-gnueabihf/liblgpio.so || -f /usr/lib/arm-linux-gnueabi/liblgpio.so ]] || missing_apt_packages+=("liblgpio-dev")
 [[ -f "/usr/include/python$(python3 - <<'PY'
 import sys
 print(f"{sys.version_info.major}.{sys.version_info.minor}")
