@@ -99,7 +99,7 @@ app.use(
   "*",
   cors({
     origin: process.env.NAVIBOT_WEB_ORIGIN ?? "*",
-    allowHeaders: ["Authorization", "Content-Type"],
+    allowHeaders: ["Authorization", "Content-Type", "X-Navibot-Token"],
     allowMethods: ["GET", "POST", "OPTIONS"],
   }),
 );

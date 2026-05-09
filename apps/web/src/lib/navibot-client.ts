@@ -72,7 +72,7 @@ export async function sendRestCommand(
   const response = await fetch(`${config.backendHttpUrl}/api/robots/${config.robotId}/commands`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${operatorToken}`,
+      "X-Navibot-Token": operatorToken,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ type, payload }),

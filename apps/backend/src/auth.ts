@@ -9,6 +9,10 @@ export function getOperatorToken(): string {
 }
 
 export function tokenFromRequest(c: Context): string | null {
+  const navibotToken = c.req.header("x-navibot-token");
+  if (navibotToken) {
+    return navibotToken;
+  }
   const header = c.req.header("authorization");
   if (header?.startsWith("Bearer ")) {
     return header.slice("Bearer ".length);

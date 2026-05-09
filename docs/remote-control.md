@@ -136,4 +136,4 @@ The first pass uses separate bearer tokens over HTTPS/WSS:
 - `NAVIBOT_ROBOT_TOKEN`: private to the Pi and backend.
 - `NAVIBOT_OPERATOR_TOKEN`: entered by the operator in the browser at runtime.
 
-Do not put either token in `VITE_*` variables. Vite variables are public browser bundle configuration. WebSocket TLS protects traffic in transit. For camera video and lower-latency manual control, the next step is to use this Hono backend as WebRTC signaling and move live video/control onto WebRTC media/data channels.
+Do not put either token in `VITE_*` variables. Vite variables are public browser bundle configuration. REST calls may use the `X-Navibot-Token` header; websocket connections pass the token as a query parameter during the upgrade. WebSocket TLS protects traffic in transit. For camera video and lower-latency manual control, the next step is to use this Hono backend as WebRTC signaling and move live video/control onto WebRTC media/data channels.

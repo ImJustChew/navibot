@@ -49,7 +49,7 @@ steps:
       - --max-instances
       - "2"
       - --timeout
-      - 3600
+      - "3600"
       - --set-env-vars
       - NAVIBOT_WEB_ORIGIN=${_NAVIBOT_WEB_ORIGIN}
       - --set-secrets
