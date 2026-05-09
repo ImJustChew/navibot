@@ -14,6 +14,7 @@ function formatNumber(value: number | undefined, suffix = "", digits = 1) {
 }
 
 function App() {
+  const [operatorToken, setOperatorToken] = useState(() => sessionStorage.getItem("navibot_operator_token") ?? "");
   const [connection, setConnection] = useState<"connecting" | "open" | "closed">("closed");
   const [online, setOnline] = useState(false);
   const [telemetry, setTelemetry] = useState<TelemetryState>({});
@@ -21,7 +22,15 @@ function App() {
   const [sendCommand, setSendCommand] = useState<(type: string, payload?: Record<string, unknown>) => boolean>(() => () => false);
 
   useEffect(() => {
+    if (!operatorToken) {
+      setConnection("closed");
+      setOnline(false);
+      setSendCommand(() => () => false);
+      return;
+    }
+    sessionStorage.setItem("navibot_operator_token", operatorToken);
     const client = connectRobotEvents(
+      operatorToken,
       (event) => {
         setEvents((current) => [`${new Date().toLocaleTimeString()} ${event.kind}`, ...current].slice(0, 10));
         if (event.kind === "robot_status") {
@@ -36,7 +45,7 @@ function App() {
     );
     setSendCommand(() => client.sendCommand);
     return () => client.close();
-  }, []);
+  }, [operatorToken]);
 
   const tofRows = useMemo(() => Object.entries(telemetry.tof_mm ?? {}), [telemetry.tof_mm]);
 
@@ -56,6 +65,22 @@ function App() {
           {online ? "Robot online" : "Robot offline"} · {connection}
         </div>
       </header>
+
+      {!operatorToken ? (
+        <section className="login panel">
+          <div className="panel-title">Operator Access</div>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = new FormData(event.currentTarget);
+              setOperatorToken(String(form.get("token") ?? "").trim());
+            }}
+          >
+            <input name="token" type="password" placeholder="Operator token" autoComplete="current-password" />
+            <button type="submit">Connect</button>
+          </form>
+        </section>
+      ) : null}
 
       <section className="grid">
         <section className="panel telemetry">

@@ -1,7 +1,11 @@
 import type { Context, Next } from "hono";
 
-export function getSharedSecret(): string {
-  return process.env.NAVIBOT_SHARED_SECRET ?? "change-me";
+export function getRobotToken(): string {
+  return process.env.NAVIBOT_ROBOT_TOKEN ?? process.env.NAVIBOT_SHARED_SECRET ?? "change-me";
+}
+
+export function getOperatorToken(): string {
+  return process.env.NAVIBOT_OPERATOR_TOKEN ?? process.env.NAVIBOT_SHARED_SECRET ?? "change-me";
 }
 
 export function tokenFromRequest(c: Context): string | null {
@@ -12,8 +16,8 @@ export function tokenFromRequest(c: Context): string | null {
   return c.req.query("token") ?? null;
 }
 
-export async function requireSharedSecret(c: Context, next: Next) {
-  const expected = getSharedSecret();
+export async function requireOperatorToken(c: Context, next: Next) {
+  const expected = getOperatorToken();
   const provided = tokenFromRequest(c);
   if (!provided || provided !== expected) {
     return c.json({ error: "unauthorized" }, 401);

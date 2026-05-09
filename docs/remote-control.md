@@ -24,7 +24,8 @@ Raspberry Pi robot agent
 Set these in the backend host:
 
 ```bash
-NAVIBOT_SHARED_SECRET=replace-with-long-random-token
+NAVIBOT_ROBOT_TOKEN=replace-with-long-random-robot-token
+NAVIBOT_OPERATOR_TOKEN=replace-with-long-random-operator-token
 NAVIBOT_WEB_ORIGIN=https://your-vercel-app.vercel.app
 DATABASE_URL=postgresql://...neon.tech/navibot?sslmode=require
 PORT=8787
@@ -36,7 +37,6 @@ Set these in Vercel for `apps/web`:
 VITE_BACKEND_HTTP_URL=https://your-backend.example.com
 VITE_BACKEND_WS_URL=wss://your-backend.example.com
 VITE_ROBOT_ID=devbot
-VITE_SHARED_SECRET=replace-with-long-random-token
 ```
 
 Set these on the Pi:
@@ -44,7 +44,7 @@ Set these on the Pi:
 ```bash
 NAVIBOT_BACKEND_URL=wss://your-backend.example.com
 NAVIBOT_ROBOT_ID=devbot
-NAVIBOT_SHARED_SECRET=replace-with-long-random-token
+NAVIBOT_ROBOT_TOKEN=replace-with-long-random-robot-token
 ```
 
 ## Local Development
@@ -99,4 +99,9 @@ The backend still runs without `DATABASE_URL`; it will relay commands and teleme
 
 ## Security Notes
 
-The first pass uses a shared bearer token over HTTPS/WSS. Rotate it before deploying outside a private test. WebSocket TLS protects traffic in transit. For camera video and lower-latency manual control, the next step is to use this Hono backend as WebRTC signaling and move live video/control onto WebRTC media/data channels.
+The first pass uses separate bearer tokens over HTTPS/WSS:
+
+- `NAVIBOT_ROBOT_TOKEN`: private to the Pi and backend.
+- `NAVIBOT_OPERATOR_TOKEN`: entered by the operator in the browser at runtime.
+
+Do not put either token in `VITE_*` variables. Vite variables are public browser bundle configuration. WebSocket TLS protects traffic in transit. For camera video and lower-latency manual control, the next step is to use this Hono backend as WebRTC signaling and move live video/control onto WebRTC media/data channels.

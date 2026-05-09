@@ -34,11 +34,12 @@ export type DriveCommand = {
 };
 
 export function connectRobotEvents(
+  operatorToken: string,
   onEvent: (event: ClientEvent) => void,
   onConnectionState: (state: "connecting" | "open" | "closed") => void,
 ) {
   const url = new URL(`/ws/client/${config.robotId}`, config.backendWsUrl);
-  url.searchParams.set("token", config.sharedSecret);
+  url.searchParams.set("token", operatorToken);
   const socket = new WebSocket(url);
 
   onConnectionState("connecting");
@@ -63,11 +64,15 @@ export function connectRobotEvents(
   };
 }
 
-export async function sendRestCommand(type: string, payload: Record<string, unknown> = {}) {
+export async function sendRestCommand(
+  operatorToken: string,
+  type: string,
+  payload: Record<string, unknown> = {},
+) {
   const response = await fetch(`${config.backendHttpUrl}/api/robots/${config.robotId}/commands`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${config.sharedSecret}`,
+      Authorization: `Bearer ${operatorToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ type, payload }),

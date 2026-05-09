@@ -233,7 +233,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Connect the Raspberry Pi robot to the Navibot cloud backend.")
     parser.add_argument("--backend-url", default=os.getenv("NAVIBOT_BACKEND_URL", "ws://localhost:8787"))
     parser.add_argument("--robot-id", default=os.getenv("NAVIBOT_ROBOT_ID", "devbot"))
-    parser.add_argument("--shared-secret", default=os.getenv("NAVIBOT_SHARED_SECRET", "change-me"))
+    parser.add_argument(
+        "--shared-secret",
+        default=os.getenv("NAVIBOT_ROBOT_TOKEN", os.getenv("NAVIBOT_SHARED_SECRET", "change-me")),
+    )
     parser.add_argument("--telemetry-seconds", type=float, default=0.5)
     parser.add_argument("--mock", action="store_true")
     parser.add_argument("--speed-scale", type=float, default=0.22)

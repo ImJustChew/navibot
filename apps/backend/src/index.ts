@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { nanoid } from "nanoid";
 
-import { requireSharedSecret, tokenFromRequest, getSharedSecret } from "./auth";
+import { requireOperatorToken, tokenFromRequest, getOperatorToken, getRobotToken } from "./auth";
 import { createDb } from "./db/client";
 import { mapSnapshots, robotCommands, robots, telemetrySamples } from "./db/schema";
 import { RobotHub } from "./hub";
@@ -112,7 +112,7 @@ app.get("/health", (c) =>
   }),
 );
 
-app.get("/api/robots", requireSharedSecret, async (c) => {
+app.get("/api/robots", requireOperatorToken, async (c) => {
   if (!db) {
     return c.json({ robots: hub.listRobots() });
   }
@@ -120,7 +120,7 @@ app.get("/api/robots", requireSharedSecret, async (c) => {
   return c.json({ robots: rows });
 });
 
-app.get("/api/robots/:robotId/status", requireSharedSecret, async (c) => {
+app.get("/api/robots/:robotId/status", requireOperatorToken, async (c) => {
   const robotId = requireRobotId(c.req.param("robotId"));
   if (!db) {
     return c.json({ robot: hub.listRobots().find((robot) => robot.id === robotId) ?? null });
@@ -135,7 +135,7 @@ app.get("/api/robots/:robotId/status", requireSharedSecret, async (c) => {
   return c.json({ robot: robot ?? null, latestTelemetry: latestTelemetry[0] ?? null });
 });
 
-app.post("/api/robots/:robotId/commands", requireSharedSecret, async (c) => {
+app.post("/api/robots/:robotId/commands", requireOperatorToken, async (c) => {
   const robotId = requireRobotId(c.req.param("robotId"));
   const body = await c.req.json();
   const parsedPayload =
@@ -170,7 +170,7 @@ app.get(
   upgradeWebSocket((c) => {
     const robotId = requireRobotId(c.req.param("robotId"));
     const token = tokenFromRequest(c);
-    if (token !== getSharedSecret()) {
+    if (token !== getRobotToken()) {
       return {
         onOpen(_event, ws) {
           ws.close(1008, "unauthorized");
@@ -305,7 +305,7 @@ app.get(
   upgradeWebSocket((c) => {
     const robotId = requireRobotId(c.req.param("robotId"));
     const token = tokenFromRequest(c);
-    if (token !== getSharedSecret()) {
+    if (token !== getOperatorToken()) {
       return {
         onOpen(_event, ws) {
           ws.close(1008, "unauthorized");

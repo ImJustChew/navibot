@@ -25,6 +25,16 @@ button {
   cursor: pointer;
 }
 
+input {
+  border: 1px solid #3b4650;
+  border-radius: 6px;
+  background: #0f1419;
+  color: #eef3f6;
+  font: inherit;
+  min-height: 44px;
+  padding: 0 12px;
+}
+
 button:hover {
   background: #24303a;
 }
@@ -80,6 +90,16 @@ h1 {
   display: grid;
   grid-template-columns: 1.2fr 0.8fr;
   gap: 14px;
+}
+
+.login {
+  margin-bottom: 14px;
+}
+
+.login form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
 }
 
 .panel {
