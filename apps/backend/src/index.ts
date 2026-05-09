@@ -15,6 +15,7 @@ import {
   mapSnapshotSchema,
   robotHelloSchema,
   telemetryMessageSchema,
+  videoFrameSchema,
   type CommandMessage,
 } from "./protocol";
 
@@ -257,33 +258,52 @@ app.get(
           }
 
           if (message.kind === "command_ack") {
-          const commandId = String(message.commandId);
-          if (db) {
-            await db
-              .update(robotCommands)
-              .set({ status: "acknowledged", acknowledgedAt: new Date() })
-              .where(eq(robotCommands.id, commandId));
-          }
-          hub.broadcast(robotId, {
-            kind: "command_ack",
-            robotId,
-            commandId,
-            at: new Date().toISOString(),
-          });
-          return;
+            const commandId = String(message.commandId);
+            if (db) {
+              await db
+                .update(robotCommands)
+                .set({ status: "acknowledged", acknowledgedAt: new Date() })
+                .where(eq(robotCommands.id, commandId));
+            }
+            hub.broadcast(robotId, {
+              kind: "command_ack",
+              robotId,
+              commandId,
+              at: new Date().toISOString(),
+            });
+            return;
           }
 
           if (message.kind === "map_snapshot") {
-          const snapshot = mapSnapshotSchema.parse(message);
-          if (db) {
-            await db.insert(mapSnapshots).values({
-              id: nanoid(),
-              robotId,
-              label: snapshot.label,
-              resolutionMm: snapshot.resolutionMm,
-              payload: snapshot.payload,
-            });
+            const snapshot = mapSnapshotSchema.parse(message);
+            if (db) {
+              await db.insert(mapSnapshots).values({
+                id: nanoid(),
+                robotId,
+                label: snapshot.label,
+                resolutionMm: snapshot.resolutionMm,
+                payload: snapshot.payload,
+              });
+            }
+            return;
           }
+
+          if (message.kind === "video_frame") {
+            const frame = videoFrameSchema.parse(message);
+            hub.broadcast(robotId, {
+              kind: "video_frame",
+              robotId,
+              frame: {
+                contentType: frame.contentType,
+                data: frame.data,
+                width: frame.width,
+                height: frame.height,
+                sequence: frame.sequence,
+                capturedAt: frame.capturedAt,
+              },
+              at: frame.capturedAt,
+            });
+            return;
           }
         } catch (error) {
           console.error("robot websocket message failed", error);

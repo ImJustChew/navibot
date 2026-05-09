@@ -20,9 +20,19 @@ export type TelemetryState = {
   safety?: Record<string, unknown>;
 };
 
+export type VideoFrame = {
+  contentType: "image/jpeg";
+  data: string;
+  width: number;
+  height: number;
+  sequence: number;
+  capturedAt: string;
+};
+
 export type ClientEvent =
   | { kind: "robot_status"; robotId: string; online: boolean; at: string }
   | { kind: "telemetry"; robotId: string; state: TelemetryState; at: string }
+  | { kind: "video_frame"; robotId: string; frame: VideoFrame; at: string }
   | { kind: "command_ack"; robotId: string; commandId: string; at: string }
   | { kind: "command_sent"; commandId: string; sent: boolean }
   | { kind: "error"; message: string };

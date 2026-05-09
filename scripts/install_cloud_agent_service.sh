@@ -28,12 +28,17 @@ if [[ -z "${ROBOT_TOKEN}" ]]; then
   exit 1
 fi
 
+if [[ -x "${VENV_DIR}/bin/python" ]] && ! grep -q "include-system-site-packages = true" "${VENV_DIR}/pyvenv.cfg"; then
+  echo "Recreating Python venv with system site packages for Raspberry Pi camera libraries." >&2
+  rm -rf "${VENV_DIR}"
+fi
+
 if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
-  if ! python3 -m venv "${VENV_DIR}"; then
+  if ! python3 -m venv --system-site-packages "${VENV_DIR}"; then
     echo "python3 venv support is missing; installing python3-venv and retrying." >&2
     sudo apt-get update
     sudo apt-get install -y python3-venv
-    python3 -m venv "${VENV_DIR}"
+    python3 -m venv --system-site-packages "${VENV_DIR}"
   fi
 fi
 
@@ -41,6 +46,7 @@ missing_apt_packages=()
 command -v swig >/dev/null 2>&1 || missing_apt_packages+=("swig")
 command -v gcc >/dev/null 2>&1 || missing_apt_packages+=("build-essential")
 [[ -f /usr/lib/aarch64-linux-gnu/liblgpio.so || -f /usr/lib/arm-linux-gnueabihf/liblgpio.so || -f /usr/lib/arm-linux-gnueabi/liblgpio.so ]] || missing_apt_packages+=("liblgpio-dev")
+python3 -c "import picamera2" >/dev/null 2>&1 || missing_apt_packages+=("python3-picamera2")
 [[ -f "/usr/include/python$(python3 - <<'PY'
 import sys
 print(f"{sys.version_info.major}.{sys.version_info.minor}")

@@ -2,15 +2,24 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import io
 import json
 import math
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from time import monotonic
 from typing import Any
 
 from navibot.robot.hardware import RobotHardware, RobotHardwareConfig
-from navibot.robot.motors import DifferentialDrive, DriverMotor, MotorPins, clamp, validate_motor_voltage
+from navibot.robot.motors import (
+    DifferentialDrive,
+    DriverMotor,
+    MotorPins,
+    clamp,
+    validate_motor_voltage,
+)
 
 
 @dataclass(frozen=True)
@@ -29,11 +38,20 @@ class RobotAgentConfig:
     standby_pin: int
     left_motor_inverted: bool
     right_motor_inverted: bool
+    camera_enabled: bool
+    camera_width: int
+    camera_height: int
+    camera_fps: float
+    camera_quality: int
 
 
 class DriveController:
     def __init__(self, config: RobotAgentConfig) -> None:
-        validate_motor_voltage(config.speed_scale + config.turn_scale, config.supply_voltage, config.motor_voltage_limit)
+        validate_motor_voltage(
+            config.speed_scale + config.turn_scale,
+            config.supply_voltage,
+            config.motor_voltage_limit,
+        )
         self._drive = DifferentialDrive(
             left=DriverMotor(config.left_motor, inverted=config.left_motor_inverted),
             right=DriverMotor(config.right_motor, inverted=config.right_motor_inverted),
@@ -130,6 +148,54 @@ class TelemetrySource:
             self._hardware = None
 
 
+class CameraSource:
+    def __init__(self, config: RobotAgentConfig) -> None:
+        self._config = config
+        self._camera: Any | None = None
+        self._sequence = 0
+
+    def start(self) -> None:
+        if self._camera:
+            return
+        try:
+            from picamera2 import Picamera2
+        except ImportError as exc:
+            msg = "Raspberry Pi camera streaming requires the apt package python3-picamera2"
+            raise RuntimeError(msg) from exc
+
+        camera = Picamera2()
+        video_config = camera.create_video_configuration(
+            main={"size": (self._config.camera_width, self._config.camera_height)}
+        )
+        camera.configure(video_config)
+        camera.options["quality"] = self._config.camera_quality
+        camera.start()
+        self._camera = camera
+
+    def capture_frame(self) -> dict[str, Any]:
+        if not self._camera:
+            self.start()
+
+        stream = io.BytesIO()
+        self._camera.capture_file(stream, format="jpeg")
+        self._sequence += 1
+        return {
+            "kind": "video_frame",
+            "robotId": self._config.robot_id,
+            "contentType": "image/jpeg",
+            "data": base64.b64encode(stream.getvalue()).decode("ascii"),
+            "width": self._config.camera_width,
+            "height": self._config.camera_height,
+            "sequence": self._sequence,
+            "capturedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        }
+
+    def close(self) -> None:
+        if self._camera:
+            self._camera.close()
+            self._camera = None
+
+
 async def run_agent(config: RobotAgentConfig) -> None:
     try:
         import websockets
@@ -141,6 +207,7 @@ async def run_agent(config: RobotAgentConfig) -> None:
     drive: DriveController | None = None
     if not config.mock:
         drive = DriveController(config)
+    camera = CameraSource(config) if config.camera_enabled and not config.mock else None
 
     url = websocket_url(config)
 
@@ -149,22 +216,34 @@ async def run_agent(config: RobotAgentConfig) -> None:
             telemetry.start()
             if drive:
                 drive.start()
-            async with websockets.connect(url, open_timeout=60, ping_interval=20, ping_timeout=20) as ws:
+            async with websockets.connect(
+                url,
+                open_timeout=60,
+                ping_interval=20,
+                ping_timeout=20,
+            ) as ws:
                 await ws.send(
                     json.dumps(
                         {
                             "kind": "hello",
                             "robotId": config.robot_id,
                             "name": config.robot_id,
-                            "capabilities": ["drive", "telemetry", "tof", "battery", "mapping"],
+                            "capabilities": [
+                                "drive",
+                                "telemetry",
+                                "tof",
+                                "battery",
+                                "mapping",
+                                *([] if camera is None else ["camera"]),
+                            ],
                         },
                         separators=(",", ":"),
                     )
                 )
-                await asyncio.gather(
-                    telemetry_loop(ws, telemetry, config),
-                    command_loop(ws, drive),
-                )
+                loops = [telemetry_loop(ws, telemetry, config), command_loop(ws, drive)]
+                if camera:
+                    loops.append(camera_loop(ws, camera, config))
+                await asyncio.gather(*loops)
         except Exception as exc:
             print(f"cloud agent disconnected: {exc}; retrying in 3s", flush=True)
             if drive:
@@ -172,6 +251,8 @@ async def run_agent(config: RobotAgentConfig) -> None:
             await asyncio.sleep(3)
         finally:
             telemetry.close()
+            if camera:
+                camera.close()
 
 
 async def telemetry_loop(ws: Any, telemetry: TelemetrySource, config: RobotAgentConfig) -> None:
@@ -187,6 +268,19 @@ async def telemetry_loop(ws: Any, telemetry: TelemetrySource, config: RobotAgent
             )
         )
         await asyncio.sleep(config.telemetry_seconds)
+
+
+async def camera_loop(ws: Any, camera: CameraSource, config: RobotAgentConfig) -> None:
+    interval_seconds = 1 / max(config.camera_fps, 0.1)
+    while True:
+        try:
+            frame = await asyncio.to_thread(camera.capture_frame)
+            await ws.send(json.dumps(frame, separators=(",", ":")))
+        except Exception as exc:
+            print(f"camera frame failed: {exc}", flush=True)
+            await asyncio.sleep(3)
+        else:
+            await asyncio.sleep(interval_seconds)
 
 
 async def command_loop(ws: Any, drive: DriveController | None) -> None:
@@ -230,8 +324,13 @@ def websocket_url(config: RobotAgentConfig) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Connect the Raspberry Pi robot to the Navibot cloud backend.")
-    parser.add_argument("--backend-url", default=os.getenv("NAVIBOT_BACKEND_URL", "ws://localhost:8787"))
+    parser = argparse.ArgumentParser(
+        description="Connect the Raspberry Pi robot to the Navibot cloud backend."
+    )
+    parser.add_argument(
+        "--backend-url",
+        default=os.getenv("NAVIBOT_BACKEND_URL", "ws://localhost:8787"),
+    )
     parser.add_argument("--robot-id", default=os.getenv("NAVIBOT_ROBOT_ID", "devbot"))
     parser.add_argument(
         "--shared-secret",
@@ -250,10 +349,49 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--right-in1", type=int, default=20)
     parser.add_argument("--right-in2", type=int, default=21)
     parser.add_argument("--standby", type=int, default=16)
-    parser.add_argument("--left-motor-inverted", dest="left_motor_inverted", action="store_true", default=True)
+    parser.add_argument(
+        "--left-motor-inverted",
+        dest="left_motor_inverted",
+        action="store_true",
+        default=True,
+    )
     parser.add_argument("--left-motor-normal", dest="left_motor_inverted", action="store_false")
     parser.add_argument("--right-motor-inverted", action="store_true")
+    parser.add_argument(
+        "--camera-enabled",
+        dest="camera_enabled",
+        action="store_true",
+        default=env_bool("NAVIBOT_CAMERA_ENABLED", True),
+    )
+    parser.add_argument("--camera-disabled", dest="camera_enabled", action="store_false")
+    parser.add_argument(
+        "--camera-width",
+        type=int,
+        default=int(os.getenv("NAVIBOT_CAMERA_WIDTH", "320")),
+    )
+    parser.add_argument(
+        "--camera-height",
+        type=int,
+        default=int(os.getenv("NAVIBOT_CAMERA_HEIGHT", "240")),
+    )
+    parser.add_argument(
+        "--camera-fps",
+        type=float,
+        default=float(os.getenv("NAVIBOT_CAMERA_FPS", "2")),
+    )
+    parser.add_argument(
+        "--camera-quality",
+        type=int,
+        default=int(os.getenv("NAVIBOT_CAMERA_QUALITY", "70")),
+    )
     return parser.parse_args()
+
+
+def env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def build_config(args: argparse.Namespace) -> RobotAgentConfig:
@@ -272,6 +410,11 @@ def build_config(args: argparse.Namespace) -> RobotAgentConfig:
         standby_pin=args.standby,
         left_motor_inverted=args.left_motor_inverted,
         right_motor_inverted=args.right_motor_inverted,
+        camera_enabled=args.camera_enabled,
+        camera_width=args.camera_width,
+        camera_height=args.camera_height,
+        camera_fps=args.camera_fps,
+        camera_quality=args.camera_quality,
     )
 
 

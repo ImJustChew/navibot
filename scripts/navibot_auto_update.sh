@@ -23,8 +23,11 @@ if [[ "${LOCAL_HEAD}" == "${REMOTE_HEAD}" ]]; then
 fi
 
 sudo -u "${RUN_AS_USER}" git pull --ff-only origin "${BRANCH}"
+if [[ -x "${VENV_DIR}/bin/python" ]] && ! grep -q "include-system-site-packages = true" "${VENV_DIR}/pyvenv.cfg"; then
+  rm -rf "${VENV_DIR}"
+fi
 if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
-  sudo -u "${RUN_AS_USER}" python3 -m venv "${VENV_DIR}"
+  sudo -u "${RUN_AS_USER}" python3 -m venv --system-site-packages "${VENV_DIR}"
 fi
 sudo -u "${RUN_AS_USER}" "${VENV_DIR}/bin/python" -m pip install -e "${REPO_DIR}[rpi]"
 

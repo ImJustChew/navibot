@@ -36,13 +36,31 @@ export const mapSnapshotSchema = z.object({
   payload: z.record(z.unknown()),
 });
 
+export const videoFrameSchema = z.object({
+  kind: z.literal("video_frame"),
+  robotId: z.string(),
+  contentType: z.literal("image/jpeg").default("image/jpeg"),
+  data: z.string(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  sequence: z.number().int().nonnegative(),
+  capturedAt: z.string(),
+});
+
 export type CommandMessage = z.infer<typeof commandMessageSchema>;
 export type TelemetryMessage = z.infer<typeof telemetryMessageSchema>;
 export type RobotHello = z.infer<typeof robotHelloSchema>;
 export type MapSnapshotMessage = z.infer<typeof mapSnapshotSchema>;
+export type VideoFrameMessage = z.infer<typeof videoFrameSchema>;
 
 export type ClientEvent =
   | { kind: "robot_status"; robotId: string; online: boolean; at: string }
   | { kind: "telemetry"; robotId: string; state: Record<string, unknown>; at: string }
+  | {
+      kind: "video_frame";
+      robotId: string;
+      frame: Omit<VideoFrameMessage, "kind" | "robotId">;
+      at: string;
+    }
   | { kind: "command_ack"; robotId: string; commandId: string; at: string }
   | { kind: "error"; message: string };
