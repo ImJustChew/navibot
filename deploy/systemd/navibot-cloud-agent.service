@@ -1,0 +1,19 @@
+[Unit]
+Description=Navibot cloud robot agent
+After=network-online.target navibot-battery-guard.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vroom
+Group=vroom
+WorkingDirectory=/home/vroom/navibot
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/vroom/navibot/src
+EnvironmentFile=/etc/navibot/cloud-agent.env
+ExecStart=/usr/bin/python3 -m apps.robot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

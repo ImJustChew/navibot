@@ -1,0 +1,11 @@
+[Unit]
+Description=Navibot git auto-update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/home/vroom/navibot
+ExecStart=/home/vroom/navibot/scripts/navibot_auto_update.sh
