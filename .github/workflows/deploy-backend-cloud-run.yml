@@ -1,0 +1,55 @@
+name: Deploy Backend To Cloud Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: Cloud Run region
+        required: true
+        default: asia-southeast1
+      service:
+        description: Cloud Run service name
+        required: true
+        default: navibot-backend
+      repository:
+        description: Artifact Registry repository
+        required: true
+        default: navibot
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker ${{ inputs.region }}-docker.pkg.dev --quiet
+      - name: Build image
+        run: |
+          docker build \
+            -f apps/backend/Dockerfile \
+            -t ${{ inputs.region }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ inputs.repository }}/backend:${{ github.sha }} \
+            -t ${{ inputs.region }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ inputs.repository }}/backend:latest \
+            .
+      - name: Push image
+        run: |
+          docker push ${{ inputs.region }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ inputs.repository }}/backend:${{ github.sha }}
+          docker push ${{ inputs.region }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ inputs.repository }}/backend:latest
+      - name: Deploy Cloud Run
+        run: |
+          gcloud run deploy ${{ inputs.service }} \
+            --image ${{ inputs.region }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ inputs.repository }}/backend:${{ github.sha }} \
+            --region ${{ inputs.region }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-env-vars NAVIBOT_WEB_ORIGIN=${{ secrets.NAVIBOT_WEB_ORIGIN }} \
+            --set-env-vars NAVIBOT_ROBOT_TOKEN=${{ secrets.NAVIBOT_ROBOT_TOKEN }} \
+            --set-env-vars NAVIBOT_OPERATOR_TOKEN=${{ secrets.NAVIBOT_OPERATOR_TOKEN }} \
+            --set-env-vars DATABASE_URL=${{ secrets.DATABASE_URL }}

@@ -2,6 +2,7 @@ FROM oven/bun:1.3.4-alpine AS deps
 WORKDIR /app
 COPY package.json bun.lock* ./
 COPY apps/backend/package.json apps/backend/package.json
+COPY apps/web/package.json apps/web/package.json
 RUN bun install --frozen-lockfile
 
 FROM oven/bun:1.3.4-alpine AS build
@@ -9,6 +10,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
 COPY package.json tsconfig.base.json ./
 COPY apps/backend apps/backend
+COPY apps/web/package.json apps/web/package.json
 RUN bun run --cwd apps/backend build
 
 FROM oven/bun:1.3.4-alpine AS runner

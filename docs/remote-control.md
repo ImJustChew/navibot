@@ -97,6 +97,38 @@ bun run db:migrate
 
 The backend still runs without `DATABASE_URL`; it will relay commands and telemetry in memory only. Configure Neon before expecting durable status, command history, telemetry history, or map snapshots.
 
+## Cloud Run Deployment
+
+Recommended GCP resources:
+
+- Cloud Run service: `navibot-backend`
+- Artifact Registry Docker repository: `navibot`
+- Secret Manager secrets:
+  - `navibot-database-url`
+  - `navibot-robot-token`
+  - `navibot-operator-token`
+
+Manual Cloud Build deploy:
+
+```bash
+gcloud builds submit . \
+  --config deploy/cloudbuild-backend-deploy.yaml \
+  --substitutions="_REGION=asia-southeast1,_REPOSITORY=navibot,_IMAGE=backend,_SERVICE=navibot-backend,_NAVIBOT_WEB_ORIGIN=https://your-vercel-app.vercel.app"
+```
+
+Build-only Cloud Build:
+
+```bash
+gcloud builds submit . \
+  --config deploy/cloudbuild-backend.yaml \
+  --substitutions="_REGION=asia-southeast1,_REPOSITORY=navibot,_IMAGE=backend"
+```
+
+GitHub Actions:
+
+- `.github/workflows/ci.yml` runs Python tests, Bun typecheck/build, and Docker image build.
+- `.github/workflows/deploy-backend-cloud-run.yml` is a manual workflow for Cloud Run deploys using Workload Identity Federation.
+
 ## Security Notes
 
 The first pass uses separate bearer tokens over HTTPS/WSS:
