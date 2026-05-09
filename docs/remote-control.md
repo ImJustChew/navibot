@@ -52,6 +52,14 @@ NAVIBOT_CAMERA_FPS=2
 NAVIBOT_CAMERA_QUALITY=70
 ```
 
+Manual drive commands use normalized direction plus a separate speed scalar:
+
+```json
+{ "type": "drive", "payload": { "linear": 1, "angular": 0, "speed": 0.6, "durationMs": 350 } }
+```
+
+The Pi agent defaults to a `--speed-scale` of `0.44` and `--turn-scale` of `0.16`. With the web control default of `60%`, forward drive now applies about twice the motor PWM used by the earlier web default.
+
 ## Local Development
 
 Install Bun packages:

@@ -3,6 +3,7 @@ import { z } from "zod";
 export const drivePayloadSchema = z.object({
   linear: z.number().min(-1).max(1),
   angular: z.number().min(-1).max(1),
+  speed: z.number().min(0.2).max(1).default(1),
   durationMs: z.number().int().min(50).max(5000).default(250),
 });
 

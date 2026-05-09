@@ -40,6 +40,7 @@ export type ClientEvent =
 export type DriveCommand = {
   linear: number;
   angular: number;
+  speed?: number;
   durationMs?: number;
 };
 

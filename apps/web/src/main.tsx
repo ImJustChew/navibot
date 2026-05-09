@@ -320,8 +320,9 @@ function App() {
       const { linear, angular } = getVec();
       if (linear === 0 && angular === 0) return;
       sendCommandRef.current("drive", {
-        linear: linear * driveSpeedRef.current,
-        angular: angular * driveSpeedRef.current,
+        linear,
+        angular,
+        speed: driveSpeedRef.current,
         durationMs: 350,
       });
     }
@@ -367,8 +368,9 @@ function App() {
 
   function drive(linear: number, angular: number) {
     sendCommand("drive", {
-      linear: linear * driveSpeed,
-      angular: angular * driveSpeed,
+      linear,
+      angular,
+      speed: driveSpeed,
       durationMs: 350,
     });
   }

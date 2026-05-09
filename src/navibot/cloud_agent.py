@@ -64,9 +64,10 @@ class DriveController:
     def start(self) -> None:
         self._drive.enable()
 
-    def apply_drive(self, linear: float, angular: float, duration_ms: int) -> None:
-        left = clamp(linear * self._speed_scale - angular * self._turn_scale, -1.0, 1.0)
-        right = clamp(linear * self._speed_scale + angular * self._turn_scale, -1.0, 1.0)
+    def apply_drive(self, linear: float, angular: float, speed: float, duration_ms: int) -> None:
+        speed = clamp(speed, 0.0, 1.0)
+        left = clamp((linear * self._speed_scale - angular * self._turn_scale) * speed, -1.0, 1.0)
+        right = clamp((linear * self._speed_scale + angular * self._turn_scale) * speed, -1.0, 1.0)
         self._set_wheel(self._drive.left, left)
         self._set_wheel(self._drive.right, right)
 
@@ -295,6 +296,7 @@ async def command_loop(ws: Any, drive: DriveController | None) -> None:
                 drive.apply_drive(
                     linear=float(payload.get("linear", 0.0)),
                     angular=float(payload.get("angular", 0.0)),
+                    speed=float(payload.get("speed", 1.0)),
                     duration_ms=int(payload.get("durationMs", 250)),
                 )
         elif command_type == "stop" and drive:
@@ -338,7 +340,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--telemetry-seconds", type=float, default=0.5)
     parser.add_argument("--mock", action="store_true")
-    parser.add_argument("--speed-scale", type=float, default=0.22)
+    parser.add_argument("--speed-scale", type=float, default=0.44)
     parser.add_argument("--turn-scale", type=float, default=0.16)
     parser.add_argument("--supply-voltage", type=float, default=7.4)
     parser.add_argument("--motor-voltage-limit", type=float, default=6.0)
