@@ -7,6 +7,7 @@ SERVICE_SRC="${REPO_DIR}/deploy/systemd/${SERVICE_NAME}"
 SERVICE_DST="/etc/systemd/system/${SERVICE_NAME}"
 ENV_DIR="/etc/navibot"
 ENV_FILE="${ENV_DIR}/cloud-agent.env"
+VENV_DIR="${REPO_DIR}/.venv"
 
 BACKEND_URL="${NAVIBOT_BACKEND_URL:-${1:-}}"
 ROBOT_ID="${NAVIBOT_ROBOT_ID:-${2:-devbot}}"
@@ -27,7 +28,17 @@ if [[ -z "${ROBOT_TOKEN}" ]]; then
   exit 1
 fi
 
-python3 -m pip install --user -e "${REPO_DIR}[rpi]"
+if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+  if ! python3 -m venv "${VENV_DIR}"; then
+    echo "python3 venv support is missing; installing python3-venv and retrying." >&2
+    sudo apt-get update
+    sudo apt-get install -y python3-venv
+    python3 -m venv "${VENV_DIR}"
+  fi
+fi
+
+"${VENV_DIR}/bin/python" -m pip install --upgrade pip
+"${VENV_DIR}/bin/python" -m pip install -e "${REPO_DIR}[rpi]"
 
 sudo install -d -m 0750 "${ENV_DIR}"
 sudo tee "${ENV_FILE}" >/dev/null <<EOF

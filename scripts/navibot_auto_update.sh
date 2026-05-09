@@ -5,6 +5,7 @@ REPO_DIR="/home/vroom/navibot"
 BRANCH="${NAVIBOT_AUTO_UPDATE_BRANCH:-main}"
 LOCK_FILE="/tmp/navibot-auto-update.lock"
 RUN_AS_USER="${NAVIBOT_AUTO_UPDATE_USER:-vroom}"
+VENV_DIR="${REPO_DIR}/.venv"
 
 exec 9>"${LOCK_FILE}"
 flock -n 9 || exit 0
@@ -22,7 +23,10 @@ if [[ "${LOCAL_HEAD}" == "${REMOTE_HEAD}" ]]; then
 fi
 
 sudo -u "${RUN_AS_USER}" git pull --ff-only origin "${BRANCH}"
-sudo -u "${RUN_AS_USER}" python3 -m pip install --user -e "${REPO_DIR}[rpi]"
+if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+  sudo -u "${RUN_AS_USER}" python3 -m venv "${VENV_DIR}"
+fi
+sudo -u "${RUN_AS_USER}" "${VENV_DIR}/bin/python" -m pip install -e "${REPO_DIR}[rpi]"
 
 systemctl restart navibot-cloud-agent.service
 echo "Navibot updated from ${LOCAL_HEAD} to ${REMOTE_HEAD}"

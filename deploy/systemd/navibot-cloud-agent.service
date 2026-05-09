@@ -11,7 +11,7 @@ WorkingDirectory=/home/vroom/navibot
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/home/vroom/navibot/src
 EnvironmentFile=/etc/navibot/cloud-agent.env
-ExecStart=/usr/bin/python3 -m apps.robot
+ExecStart=/home/vroom/navibot/.venv/bin/python -m apps.robot
 Restart=always
 RestartSec=5
 
