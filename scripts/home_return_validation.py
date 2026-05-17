@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
-from time import sleep
+import math
+from dataclasses import dataclass
+from time import monotonic, sleep
 
 from fiducial_odometry_calibration import (
     ArucoDetector,
@@ -19,6 +21,13 @@ from fiducial_odometry_calibration import (
     validate_motor_voltage,
     wait_for_marker,
 )
+
+
+@dataclass
+class OdomPose:
+    x_mm: float = 0.0
+    y_mm: float = 0.0
+    theta_rad: float = 0.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,8 +50,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wheel-track-mm", type=float, default=64.0)
     parser.add_argument("--pulses-per-channel", type=int, default=7)
     parser.add_argument("--gear-ratio", type=float, default=132.0)
+    parser.add_argument(
+        "--pattern",
+        choices=("reverse-yaw", "square-180"),
+        default="reverse-yaw",
+    )
     parser.add_argument("--reverse-away-mm", type=float, default=150.0)
     parser.add_argument("--side-turn-deg", type=float, default=18.0)
+    parser.add_argument("--square-side-mm", type=float, default=100.0)
     parser.add_argument("--return-tolerance-mm", type=float, default=25.0)
     parser.add_argument("--bearing-tolerance-deg", type=float, default=3.0)
     parser.add_argument("--max-return-steps", type=int, default=24)
@@ -95,6 +110,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--marker-size-mm must be greater than zero")
     if args.reverse_away_mm <= 0 or args.side_turn_deg <= 0:
         raise ValueError("--reverse-away-mm and --side-turn-deg must be greater than zero")
+    if args.square_side_mm <= 0:
+        raise ValueError("--square-side-mm must be greater than zero")
     validate_motor_voltage(args.forward_pwm, args.supply_voltage, args.motor_voltage_limit)
     validate_motor_voltage(args.reverse_pwm, args.supply_voltage, args.motor_voltage_limit)
     validate_motor_voltage(args.turn_pwm, args.supply_voltage, args.motor_voltage_limit)
@@ -104,8 +121,12 @@ def confirm_or_exit(args: argparse.Namespace) -> None:
     if args.yes:
         return
     print("This will move the robot away from the floor marker and return to marker-home.")
-    print(f"Reverse away: {args.reverse_away_mm:g} mm")
-    print(f"Side turn: {args.side_turn_deg:g} deg each way")
+    print(f"Pattern: {args.pattern}")
+    if args.pattern == "square-180":
+        print(f"Square side: {args.square_side_mm:g} mm after 180 deg turn")
+    else:
+        print(f"Reverse away: {args.reverse_away_mm:g} mm")
+        print(f"Side turn: {args.side_turn_deg:g} deg each way")
     answer = input("Type RUN to start: ")
     if answer != "RUN":
         raise SystemExit("Home return validation cancelled.")
@@ -121,7 +142,7 @@ def drive_counts(
 ) -> tuple[int, int]:
     rig.left.encoder.reset()
     rig.right.encoder.reset()
-    started = __import__("time").monotonic()
+    started = monotonic()
     if direction == "forward":
         rig.left.motor.forward(pwm)
         rig.right.motor.forward(pwm)
@@ -130,7 +151,7 @@ def drive_counts(
         rig.right.motor.reverse(pwm)
     try:
         while average_counts(rig) < target_counts:
-            if __import__("time").monotonic() - started >= timeout_seconds:
+            if monotonic() - started >= timeout_seconds:
                 print(f"{direction} move timed out before target counts.", flush=True)
                 break
             sleep(0.02)
@@ -144,13 +165,110 @@ def average_counts(rig: CalibrationRig) -> float:
     return (rig.left.encoder.sample().abs_counts + rig.right.encoder.sample().abs_counts) / 2
 
 
+def normalize_angle_rad(angle: float) -> float:
+    while angle > math.pi:
+        angle -= 2 * math.pi
+    while angle <= -math.pi:
+        angle += 2 * math.pi
+    return angle
+
+
+def update_drive_pose(
+    pose: OdomPose,
+    *,
+    counts: tuple[int, int],
+    direction: str,
+    millimeters_per_count: float,
+) -> None:
+    distance_mm = ((counts[0] + counts[1]) / 2) * millimeters_per_count
+    if direction == "reverse":
+        distance_mm = -distance_mm
+    pose.x_mm += distance_mm * math.cos(pose.theta_rad)
+    pose.y_mm += distance_mm * math.sin(pose.theta_rad)
+
+
+def update_turn_pose(
+    pose: OdomPose,
+    *,
+    counts: tuple[int, int],
+    direction: str,
+    args: argparse.Namespace,
+    millimeters_per_count: float,
+) -> None:
+    arc_mm = ((counts[0] + counts[1]) / 2) * millimeters_per_count
+    delta = (2 * arc_mm) / args.wheel_track_mm
+    if direction == "right":
+        delta = -delta
+    pose.theta_rad = normalize_angle_rad(pose.theta_rad + delta)
+
+
+def tracked_drive(
+    rig: CalibrationRig,
+    pose: OdomPose,
+    *,
+    distance_mm: float,
+    direction: str,
+    pwm: float,
+    args: argparse.Namespace,
+    millimeters_per_count: float,
+) -> None:
+    counts = drive_counts(
+        rig,
+        target_counts=counts_for_distance(distance_mm, millimeters_per_count),
+        pwm=pwm,
+        direction=direction,
+        timeout_seconds=args.move_timeout_seconds,
+    )
+    update_drive_pose(
+        pose,
+        counts=counts,
+        direction=direction,
+        millimeters_per_count=millimeters_per_count,
+    )
+    print(
+        f"odom drive {direction} {distance_mm:.1f}mm -> "
+        f"pose=({pose.x_mm:.1f},{pose.y_mm:.1f},{math.degrees(pose.theta_rad):.1f}deg)",
+        flush=True,
+    )
+
+
+def tracked_rotate(
+    rig: CalibrationRig,
+    pose: OdomPose,
+    *,
+    degrees: float,
+    direction: str,
+    args: argparse.Namespace,
+    millimeters_per_count: float,
+) -> None:
+    counts = rotate_degrees(
+        rig,
+        degrees=abs(degrees),
+        direction=direction,
+        args=args,
+        millimeters_per_count=millimeters_per_count,
+    )
+    update_turn_pose(
+        pose,
+        counts=counts,
+        direction=direction,
+        args=args,
+        millimeters_per_count=millimeters_per_count,
+    )
+    print(
+        f"odom rotate {direction} {degrees:.1f}deg -> "
+        f"pose=({pose.x_mm:.1f},{pose.y_mm:.1f},{math.degrees(pose.theta_rad):.1f}deg)",
+        flush=True,
+    )
+
+
 def move_away_pattern(
     rig: CalibrationRig,
     args: argparse.Namespace,
     millimeters_per_count: float,
 ) -> None:
     reverse_counts = counts_for_distance(args.reverse_away_mm, millimeters_per_count)
-    turn_arc_mm = __import__("math").radians(args.side_turn_deg) * args.wheel_track_mm / 2
+    turn_arc_mm = math.radians(args.side_turn_deg) * args.wheel_track_mm / 2
     turn_counts = counts_for_distance(turn_arc_mm, millimeters_per_count)
 
     print("Leaving home...", flush=True)
@@ -181,6 +299,119 @@ def move_away_pattern(
         pwm=args.turn_pwm,
         direction="left",
         timeout_seconds=args.move_timeout_seconds,
+    )
+
+
+def rotate_degrees(
+    rig: CalibrationRig,
+    *,
+    degrees: float,
+    direction: str,
+    args: argparse.Namespace,
+    millimeters_per_count: float,
+) -> tuple[int, int]:
+    turn_arc_mm = math.radians(abs(degrees)) * args.wheel_track_mm / 2
+    return rotate_counts(
+        rig,
+        target_counts=counts_for_distance(turn_arc_mm, millimeters_per_count),
+        pwm=args.turn_pwm,
+        direction=direction,
+        timeout_seconds=args.move_timeout_seconds,
+    )
+
+
+def square_180_pattern(
+    rig: CalibrationRig,
+    args: argparse.Namespace,
+    millimeters_per_count: float,
+) -> OdomPose:
+    pose = OdomPose()
+    print("Leaving home: turn 180 deg, drive square, turn 180 deg back...", flush=True)
+    tracked_rotate(
+        rig,
+        pose,
+        degrees=180,
+        direction="left",
+        args=args,
+        millimeters_per_count=millimeters_per_count,
+    )
+    for index in range(4):
+        print(f"square side {index + 1}/4", flush=True)
+        tracked_drive(
+            rig,
+            pose,
+            distance_mm=args.square_side_mm,
+            pwm=args.forward_pwm,
+            direction="forward",
+            args=args,
+            millimeters_per_count=millimeters_per_count,
+        )
+        tracked_rotate(
+            rig,
+            pose,
+            degrees=90,
+            direction="left",
+            args=args,
+            millimeters_per_count=millimeters_per_count,
+        )
+    tracked_rotate(
+        rig,
+        pose,
+        degrees=180,
+        direction="right",
+        args=args,
+        millimeters_per_count=millimeters_per_count,
+    )
+    return pose
+
+
+def odometry_return_to_home(
+    rig: CalibrationRig,
+    pose: OdomPose,
+    args: argparse.Namespace,
+    millimeters_per_count: float,
+) -> None:
+    print(
+        "Odometry return from "
+        f"pose=({pose.x_mm:.1f},{pose.y_mm:.1f},{math.degrees(pose.theta_rad):.1f}deg)",
+        flush=True,
+    )
+    distance_home_mm = math.hypot(pose.x_mm, pose.y_mm)
+    if distance_home_mm > 8:
+        target_heading = math.atan2(-pose.y_mm, -pose.x_mm)
+        heading_error = normalize_angle_rad(target_heading - pose.theta_rad)
+        tracked_rotate(
+            rig,
+            pose,
+            degrees=abs(math.degrees(heading_error)),
+            direction="left" if heading_error > 0 else "right",
+            args=args,
+            millimeters_per_count=millimeters_per_count,
+        )
+        tracked_drive(
+            rig,
+            pose,
+            distance_mm=distance_home_mm,
+            direction="forward",
+            pwm=args.forward_pwm,
+            args=args,
+            millimeters_per_count=millimeters_per_count,
+        )
+
+    heading_home_error = normalize_angle_rad(-pose.theta_rad)
+    if abs(math.degrees(heading_home_error)) > 3:
+        tracked_rotate(
+            rig,
+            pose,
+            degrees=abs(math.degrees(heading_home_error)),
+            direction="left" if heading_home_error > 0 else "right",
+            args=args,
+            millimeters_per_count=millimeters_per_count,
+        )
+    print(
+        "Odometry home neighborhood "
+        f"pose=({pose.x_mm:.1f},{pose.y_mm:.1f},{math.degrees(pose.theta_rad):.1f}deg)",
+        flush=True,
     )
 
 
@@ -267,16 +498,40 @@ def reacquire_marker(
     except RuntimeError:
         print(f"{label}: marker lost; backing up and scanning", flush=True)
 
-    drive_counts(
-        rig,
-        target_counts=counts_for_distance(35.0, millimeters_per_count),
-        pwm=args.reverse_pwm,
-        direction="reverse",
-        timeout_seconds=args.move_timeout_seconds,
-    )
-    for direction in ("left", "right", "right", "left", "left", "right"):
-        for _ in range(3):
-            pulse_rotate(rig, direction, args.turn_pwm, seconds=0.06)
+    for attempt in range(4):
+        if attempt > 0:
+            drive_counts(
+                rig,
+                target_counts=counts_for_distance(35.0, millimeters_per_count),
+                pwm=args.reverse_pwm,
+                direction="reverse",
+                timeout_seconds=args.move_timeout_seconds,
+            )
+        for direction in ("left", "right"):
+            pulses = 8 + attempt * 4
+            for _ in range(pulses):
+                pulse_rotate(rig, direction, args.turn_pwm, seconds=0.08)
+                obs = detector.detect(camera.read())
+                if obs is not None:
+                    print(
+                        f"{label}_reacquired: z={obs.z_mm:.1f}mm "
+                        f"bearing={obs.bearing_deg:.2f}deg yaw={obs.yaw_deg:.2f}deg",
+                        flush=True,
+                    )
+                    return obs
+            for _ in range(pulses * 2):
+                opposite = "right" if direction == "left" else "left"
+                pulse_rotate(rig, opposite, args.turn_pwm, seconds=0.08)
+                obs = detector.detect(camera.read())
+                if obs is not None:
+                    print(
+                        f"{label}_reacquired: z={obs.z_mm:.1f}mm "
+                        f"bearing={obs.bearing_deg:.2f}deg yaw={obs.yaw_deg:.2f}deg",
+                        flush=True,
+                    )
+                    return obs
+            for _ in range(pulses):
+                pulse_rotate(rig, direction, args.turn_pwm, seconds=0.08)
             obs = detector.detect(camera.read())
             if obs is not None:
                 print(
@@ -332,13 +587,25 @@ def main() -> None:
         )
         del start
 
-        move_away_pattern(rig, args, millimeters_per_count)
-        away = wait_for_marker(
-            camera,
-            detector,
-            timeout_seconds=args.detect_timeout_seconds,
-            label="away",
-        )
+        if args.pattern == "square-180":
+            pose = square_180_pattern(rig, args, millimeters_per_count)
+            odometry_return_to_home(rig, pose, args, millimeters_per_count)
+            away = reacquire_marker(
+                rig,
+                camera,
+                detector,
+                args,
+                millimeters_per_count,
+                label="away",
+            )
+        else:
+            move_away_pattern(rig, args, millimeters_per_count)
+            away = wait_for_marker(
+                camera,
+                detector,
+                timeout_seconds=args.detect_timeout_seconds,
+                label="away",
+            )
         print(
             f"away_error: dz={away.z_mm - home.z_mm:.1f}mm "
             f"bearing={away.bearing_deg:.2f}deg",

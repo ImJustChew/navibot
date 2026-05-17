@@ -275,3 +275,23 @@ result:            PASS
 ```
 
 The script still prints front TOF as reference-only. Marker pose is the home truth source.
+
+For a stronger square proof, use `--pattern square-180`. This turns 180 degrees away from home, drives an encoder square, turns back, uses tracked encoder odometry to drive back to the estimated home neighborhood, then uses the marker only for final correction and pass/fail scoring.
+
+```bash
+python3 scripts/home_return_validation.py --marker-size-mm 50 --marker-id 0 --pattern square-180 --square-side-mm 70 --return-tolerance-mm 30 --bearing-tolerance-deg 4 --yes
+```
+
+The marker must be visible at the start of the run. If a previous failed run leaves the robot outside marker view, manually place it back near marker-home before starting this proof.
+
+Successful `square-180` run with `--square-side-mm 70`:
+
+```text
+odom rotate left 180.0deg -> pose=(0.0,0.0,-179.7deg)
+...
+Odometry home neighborhood pose=(-0.5,0.4,0.8deg)
+final_depth_error: 15.0 mm
+final_bearing:     3.66 deg
+bad_transitions:   L=0 R=0
+result:            PASS
+```
