@@ -254,3 +254,24 @@ The script prints suggested `mm/count`, gear ratio, and wheel-track corrections.
 Bright phone screens can overexpose the marker. The script defaults to `--camera-exposure-value -2`, `--camera-contrast 2`, and `--camera-sharpness 8` because those settings decoded the current 50 mm marker reliably on the OV5647 IR-cut camera.
 
 The front TOF value in this script is reference-only. During the first calibration it did not always range the same physical target as the camera marker, especially with the small phone-displayed marker, so it is printed for sanity checking but is not used to compute correction factors.
+
+## Marker Home Return Validation
+
+Use `scripts/home_return_validation.py` to prove the robot can leave and return to a marker-defined home pose. The script records the floor marker as home, reverses away, performs a bounded left/right yaw disturbance, then returns until marker depth and bearing are within tolerance.
+
+Example:
+
+```bash
+python3 scripts/home_return_validation.py --marker-size-mm 50 --marker-id 0 --reverse-away-mm 150 --side-turn-deg 18 --return-tolerance-mm 25 --bearing-tolerance-deg 3 --yes
+```
+
+On the first successful floor-marker run, the robot left home by about `175 mm` marker-depth error and returned with:
+
+```text
+final_depth_error: 21.7 mm
+final_bearing:     -1.13 deg
+bad_transitions:   L=0 R=0
+result:            PASS
+```
+
+The script still prints front TOF as reference-only. Marker pose is the home truth source.
