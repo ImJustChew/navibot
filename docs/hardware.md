@@ -232,3 +232,21 @@ Keep Python callbacks short: only update counters in the callback, then do PID/c
 ## Docking
 
 Docking is expected to use a camera-visible fiducial marker, likely ArUco or AprilTag. Record camera model, marker size, marker family, and dock geometry before implementing pose estimation.
+
+## Fiducial Odometry Calibration
+
+Use `scripts/fiducial_odometry_calibration.py` with one forward-facing ArUco marker to compare encoder odometry against camera pose. Start with the robot facing the marker so the marker stays visible during the forward move and the small turn.
+
+Example marker-detection check without moving the robot:
+
+```bash
+python3 scripts/fiducial_odometry_calibration.py --marker-size-mm 80 --marker-id 0 --skip-motion --yes
+```
+
+Example calibration run:
+
+```bash
+python3 scripts/fiducial_odometry_calibration.py --marker-size-mm 80 --marker-id 0 --distance-mm 200 --turn-deg 20 --gear-ratio 100 --yes
+```
+
+The script prints suggested `mm/count`, gear ratio, and wheel-track corrections. The camera pose uses either a calibration JSON file or an approximate camera model from `--camera-hfov-deg`; real camera calibration will improve the numbers.

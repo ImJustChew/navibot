@@ -58,7 +58,9 @@ Manual drive commands use normalized direction plus a separate speed scalar:
 { "type": "drive", "payload": { "linear": 1, "angular": 0, "speed": 0.6, "durationMs": 350 } }
 ```
 
-The Pi agent defaults to a `--speed-scale` of `0.44` and `--turn-scale` of `0.16`. With the web control default of `60%`, forward drive now applies about twice the motor PWM used by the earlier web default.
+The Pi agent defaults to a `--speed-scale` of `0.811` and `--turn-scale` of `0.649`. With the web control default of `60%`, forward drive applies about `0.487 PWM` and pure turning applies about `0.389 PWM`.
+
+The agent clamps actual per-wheel PWM to the configured motor voltage limit. With the defaults of `--supply-voltage 7.4` and `--motor-voltage-limit 6.0`, the absolute wheel limit is `0.811 PWM`, so mixed forward+turn commands cannot exceed the 6V motor cap. The default turn scale is roughly 80% of that cap.
 
 ## Local Development
 

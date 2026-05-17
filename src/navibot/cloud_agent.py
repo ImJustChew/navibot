@@ -48,7 +48,7 @@ class RobotAgentConfig:
 class DriveController:
     def __init__(self, config: RobotAgentConfig) -> None:
         validate_motor_voltage(
-            config.speed_scale + config.turn_scale,
+            max(config.speed_scale, config.turn_scale),
             config.supply_voltage,
             config.motor_voltage_limit,
         )
@@ -59,6 +59,7 @@ class DriveController:
         )
         self._speed_scale = config.speed_scale
         self._turn_scale = config.turn_scale
+        self._max_motor_pwm = clamp(config.motor_voltage_limit / config.supply_voltage, 0.0, 1.0)
         self._stop_task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -66,8 +67,16 @@ class DriveController:
 
     def apply_drive(self, linear: float, angular: float, speed: float, duration_ms: int) -> None:
         speed = clamp(speed, 0.0, 1.0)
-        left = clamp((linear * self._speed_scale - angular * self._turn_scale) * speed, -1.0, 1.0)
-        right = clamp((linear * self._speed_scale + angular * self._turn_scale) * speed, -1.0, 1.0)
+        left = clamp(
+            (linear * self._speed_scale - angular * self._turn_scale) * speed,
+            -self._max_motor_pwm,
+            self._max_motor_pwm,
+        )
+        right = clamp(
+            (linear * self._speed_scale + angular * self._turn_scale) * speed,
+            -self._max_motor_pwm,
+            self._max_motor_pwm,
+        )
         self._set_wheel(self._drive.left, left)
         self._set_wheel(self._drive.right, right)
 
@@ -340,8 +349,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--telemetry-seconds", type=float, default=0.5)
     parser.add_argument("--mock", action="store_true")
-    parser.add_argument("--speed-scale", type=float, default=0.44)
-    parser.add_argument("--turn-scale", type=float, default=0.16)
+    parser.add_argument("--speed-scale", type=float, default=0.811)
+    parser.add_argument("--turn-scale", type=float, default=0.649)
     parser.add_argument("--supply-voltage", type=float, default=7.4)
     parser.add_argument("--motor-voltage-limit", type=float, default=6.0)
     parser.add_argument("--left-pwm", type=int, default=13)
