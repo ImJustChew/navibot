@@ -44,7 +44,7 @@ Outputs:
 - `points.csv`: projected obstacle points.
 - `path.csv`: robot pose and sensor readings per step.
 
-This test assumes a rough wheel track of `105 mm` and gear ratio `105.6`. Calibrate those values before treating the map as accurate.
+This test uses the calibrated defaults of wheel track `64 mm` and gear ratio `132`. Recalibrate those values after changing wheels, motors, tires, or encoder wiring.
 
 ## Self Exploration Map Test
 
@@ -186,7 +186,7 @@ The paired wheel drive test is `scripts/drive_pid_distance_test.py`. It decodes 
 The script does not have a simple `--speed` option because speed is controlled through PID targets. Example for a short 200 mm test using a 100:1 gearbox assumption:
 
 ```bash
-python scripts/drive_pid_distance_test.py --distance-mm 200 --gear-ratio 100 --target-speed-mm-s 80 --min-pwm 0.18 --max-pwm 0.45 --yes
+python scripts/drive_pid_distance_test.py --distance-mm 200 --target-speed-mm-s 80 --min-pwm 0.18 --max-pwm 0.45 --yes
 ```
 
 If one wheel runs backward relative to the other, add `--left-motor-inverted` or `--right-motor-inverted`. If encoder counts have the wrong sign, add the matching `--left-encoder-inverted` or `--right-encoder-inverted`.
@@ -240,13 +240,17 @@ Use `scripts/fiducial_odometry_calibration.py` with one forward-facing ArUco mar
 Example marker-detection check without moving the robot:
 
 ```bash
-python3 scripts/fiducial_odometry_calibration.py --marker-size-mm 80 --marker-id 0 --skip-motion --yes
+python3 scripts/fiducial_odometry_calibration.py --marker-size-mm 50 --marker-id 0 --skip-motion --yes
 ```
 
 Example calibration run:
 
 ```bash
-python3 scripts/fiducial_odometry_calibration.py --marker-size-mm 80 --marker-id 0 --distance-mm 200 --turn-deg 20 --gear-ratio 100 --yes
+python3 scripts/fiducial_odometry_calibration.py --marker-size-mm 50 --marker-id 0 --distance-mm 200 --turn-deg 20 --yes
 ```
 
 The script prints suggested `mm/count`, gear ratio, and wheel-track corrections. The camera pose uses either a calibration JSON file or an approximate camera model from `--camera-hfov-deg`; real camera calibration will improve the numbers.
+
+Bright phone screens can overexpose the marker. The script defaults to `--camera-exposure-value -2`, `--camera-contrast 2`, and `--camera-sharpness 8` because those settings decoded the current 50 mm marker reliably on the OV5647 IR-cut camera.
+
+The front TOF value in this script is reference-only. During the first calibration it did not always range the same physical target as the camera marker, especially with the small phone-displayed marker, so it is printed for sanity checking but is not used to compute correction factors.

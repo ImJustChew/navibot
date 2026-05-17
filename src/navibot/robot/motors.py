@@ -9,7 +9,12 @@ class MotorPins:
 
 
 class DriverMotor:
-    def __init__(self, pins: MotorPins, inverted: bool = False, brake_on_stop: bool = False) -> None:
+    def __init__(
+        self,
+        pins: MotorPins,
+        inverted: bool = False,
+        brake_on_stop: bool = False,
+    ) -> None:
         try:
             from gpiozero import OutputDevice, PWMOutputDevice
         except ImportError as exc:
@@ -118,10 +123,9 @@ def clamp(value: float, low: float, high: float) -> float:
 
 
 def validate_motor_voltage(speed: float, supply_voltage: float, motor_voltage_limit: float) -> None:
-    if speed * supply_voltage > motor_voltage_limit:
+    if speed * supply_voltage > motor_voltage_limit + 0.01:
         raise ValueError(
             "PWM would exceed the motor voltage limit: "
             f"{speed:.3f} * {supply_voltage:g}V = {speed * supply_voltage:.2f}V, "
             f"limit is {motor_voltage_limit:g}V"
         )
-

@@ -18,9 +18,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--front-stop-mm", type=int, default=180)
     parser.add_argument("--low-battery-v", type=float, default=6.2)
     parser.add_argument("--wheel-diameter-mm", type=float, default=43.0)
-    parser.add_argument("--wheel-track-mm", type=float, default=105.0)
+    parser.add_argument("--wheel-track-mm", type=float, default=64.0)
     parser.add_argument("--pulses-per-channel", type=int, default=7)
-    parser.add_argument("--gear-ratio", type=float, default=105.6)
+    parser.add_argument("--gear-ratio", type=float, default=132.0)
     parser.add_argument("--left-encoder-a", type=int, default=23)
     parser.add_argument("--left-encoder-b", type=int, default=24)
     parser.add_argument("--right-encoder-a", type=int, default=27)
@@ -77,4 +77,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

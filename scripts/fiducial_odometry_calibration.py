@@ -19,6 +19,7 @@ from navibot.calibration.odometry import (
 )
 from navibot.robot.encoders import EncoderPins, QuadratureEncoder
 from navibot.robot.motors import DriverMotor, MotorPins, clamp, validate_motor_voltage
+from navibot.sensors.vl53l1x_array import DEFAULT_VL53L1X_SPECS, Vl53l1xArray
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,8 @@ class WheelPins:
 @dataclass(frozen=True)
 class Observation:
     marker_id: int
+    x_mm: float
+    z_mm: float
     distance_mm: float
     bearing_deg: float
     yaw_deg: float
@@ -43,8 +46,13 @@ class Wheel:
         pull_up: bool,
         motor_inverted: bool,
         encoder_inverted: bool,
+        brake_on_stop: bool,
     ) -> None:
-        self.motor = DriverMotor(pins.motor, inverted=motor_inverted)
+        self.motor = DriverMotor(
+            pins.motor,
+            inverted=motor_inverted,
+            brake_on_stop=brake_on_stop,
+        )
         self.encoder = QuadratureEncoder(pins.encoder, pull_up=pull_up, inverted=encoder_inverted)
 
     def close(self) -> None:
@@ -68,6 +76,7 @@ class CalibrationRig:
             pull_up=args.pull_up,
             motor_inverted=args.left_motor_inverted,
             encoder_inverted=args.left_encoder_inverted,
+            brake_on_stop=args.brake_on_stop,
         )
         self.right = Wheel(
             WheelPins(
@@ -77,6 +86,7 @@ class CalibrationRig:
             pull_up=args.pull_up,
             motor_inverted=args.right_motor_inverted,
             encoder_inverted=args.right_encoder_inverted,
+            brake_on_stop=args.brake_on_stop,
         )
         self._standby = OutputDevice(args.standby, initial_value=False)
 
@@ -84,8 +94,8 @@ class CalibrationRig:
         self._standby.on()
 
     def stop(self) -> None:
-        self.left.motor.coast()
-        self.right.motor.coast()
+        self.left.motor.stop()
+        self.right.motor.stop()
 
     def close(self) -> None:
         self.stop()
@@ -96,7 +106,7 @@ class CalibrationRig:
 
 
 class CameraSource:
-    def __init__(self, width: int, height: int, camera_index: int) -> None:
+    def __init__(self, args: argparse.Namespace) -> None:
         self._picam2: Any | None = None
         self._capture: Any | None = None
         try:
@@ -104,17 +114,18 @@ class CameraSource:
 
             self._picam2 = Picamera2()
             config = self._picam2.create_preview_configuration(
-                main={"size": (width, height), "format": "RGB888"}
+                main={"size": (args.camera_width, args.camera_height), "format": "RGB888"}
             )
             self._picam2.configure(config)
+            self._picam2.set_controls(camera_controls(args))
             self._picam2.start()
             sleep(1.0)
         except Exception as exc:
             import cv2
 
-            self._capture = cv2.VideoCapture(camera_index)
-            self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self._capture = cv2.VideoCapture(args.camera_index)
+            self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, args.camera_width)
+            self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, args.camera_height)
             if not self._capture.isOpened():
                 raise RuntimeError(
                     "Could not open Picamera2 or OpenCV VideoCapture camera"
@@ -133,6 +144,29 @@ class CameraSource:
             self._picam2.close()
         if self._capture is not None:
             self._capture.release()
+
+
+def camera_controls(args: argparse.Namespace) -> dict[str, float | bool | int]:
+    controls: dict[str, float | bool | int] = {
+        "Contrast": args.camera_contrast,
+        "Sharpness": args.camera_sharpness,
+    }
+    if args.camera_exposure_us > 0:
+        controls.update(
+            {
+                "AeEnable": False,
+                "ExposureTime": args.camera_exposure_us,
+                "AnalogueGain": args.camera_gain,
+            }
+        )
+    else:
+        controls.update(
+            {
+                "AeEnable": True,
+                "ExposureValue": args.camera_exposure_value,
+            }
+        )
+    return controls
 
 
 class ArucoDetector:
@@ -186,6 +220,8 @@ class ArucoDetector:
             yaw_deg = math.degrees(math.atan2(float(rotation[1, 0]), float(rotation[0, 0])))
             return Observation(
                 marker_id=int(marker_id),
+                x_mm=float(tvec[0]),
+                z_mm=float(tvec[2]),
                 distance_mm=distance_mm,
                 bearing_deg=bearing_deg,
                 yaw_deg=yaw_deg,
@@ -211,6 +247,34 @@ class ArucoDetector:
         )
 
 
+class FrontTof:
+    def __init__(self, enabled: bool, settle_seconds: float) -> None:
+        self._array: Vl53l1xArray | None = None
+        if not enabled:
+            return
+        self._array = Vl53l1xArray(specs=DEFAULT_VL53L1X_SPECS)
+        self._array.start_ranging()
+        sleep(settle_seconds)
+
+    def read(self, samples: int = 5, interval_seconds: float = 0.05) -> int | None:
+        if self._array is None:
+            return None
+        values: list[int] = []
+        for _ in range(samples):
+            for reading in self._array.read_all():
+                if reading.name == "front" and reading.ready and reading.distance_mm is not None:
+                    values.append(reading.distance_mm)
+            sleep(interval_seconds)
+        if not values:
+            return None
+        values.sort()
+        return values[len(values) // 2]
+
+    def close(self) -> None:
+        if self._array is not None:
+            self._array.close()
+
+
 def wait_for_marker(
     camera: CameraSource,
     detector: ArucoDetector,
@@ -225,6 +289,8 @@ def wait_for_marker(
         if observation is not None:
             print(
                 f"{label}: id={observation.marker_id} "
+                f"x={observation.x_mm:.1f}mm "
+                f"z={observation.z_mm:.1f}mm "
                 f"distance={observation.distance_mm:.1f}mm "
                 f"bearing={observation.bearing_deg:.2f}deg "
                 f"yaw={observation.yaw_deg:.2f}deg",
@@ -311,6 +377,51 @@ def rotate_counts(
     return rig.left.encoder.sample().abs_counts, rig.right.encoder.sample().abs_counts
 
 
+def pulse_rotate(rig: CalibrationRig, direction: str, pwm: float, seconds: float) -> None:
+    if direction == "left":
+        rig.left.motor.reverse(pwm)
+        rig.right.motor.forward(pwm)
+    else:
+        rig.left.motor.forward(pwm)
+        rig.right.motor.reverse(pwm)
+    try:
+        sleep(seconds)
+    finally:
+        rig.stop()
+        sleep(0.15)
+
+
+def align_to_marker(
+    rig: CalibrationRig,
+    camera: CameraSource,
+    detector: ArucoDetector,
+    *,
+    tolerance_deg: float,
+    pwm: float,
+    timeout_seconds: float,
+) -> Observation:
+    deadline = monotonic() + timeout_seconds
+    observation = wait_for_marker(
+        camera,
+        detector,
+        timeout_seconds=min(3.0, timeout_seconds),
+        label="align_start",
+    )
+    while abs(observation.bearing_deg) > tolerance_deg:
+        if monotonic() >= deadline:
+            print("Marker alignment timed out; continuing with current bearing.", flush=True)
+            return observation
+        direction = "right" if observation.bearing_deg > 0 else "left"
+        pulse_rotate(rig, direction, pwm, seconds=0.08)
+        observation = wait_for_marker(
+            camera,
+            detector,
+            timeout_seconds=2.0,
+            label="align",
+        )
+    return observation
+
+
 def normalize_delta_deg(value: float) -> float:
     while value <= -180:
         value += 360
@@ -329,16 +440,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-index", type=int, default=0)
     parser.add_argument("--camera-hfov-deg", type=float, default=62.2)
     parser.add_argument("--camera-calibration-json")
+    parser.add_argument("--camera-exposure-value", type=float, default=-2.0)
+    parser.add_argument("--camera-exposure-us", type=int, default=0)
+    parser.add_argument("--camera-gain", type=float, default=1.0)
+    parser.add_argument("--camera-contrast", type=float, default=2.0)
+    parser.add_argument("--camera-sharpness", type=float, default=8.0)
+    parser.add_argument("--front-tof", dest="front_tof", action="store_true", default=True)
+    parser.add_argument("--no-front-tof", dest="front_tof", action="store_false")
+    parser.add_argument("--tof-settle-seconds", type=float, default=0.25)
     parser.add_argument("--detect-timeout-seconds", type=float, default=8.0)
     parser.add_argument("--distance-mm", type=float, default=200.0)
     parser.add_argument("--turn-deg", type=float, default=20.0)
     parser.add_argument("--turn-direction", choices=("left", "right"), default="left")
     parser.add_argument("--wheel-diameter-mm", type=float, default=43.0)
-    parser.add_argument("--wheel-track-mm", type=float, default=105.0)
+    parser.add_argument("--wheel-track-mm", type=float, default=64.0)
     parser.add_argument("--pulses-per-channel", type=int, default=7)
-    parser.add_argument("--gear-ratio", type=float, default=100.0)
+    parser.add_argument("--gear-ratio", type=float, default=132.0)
     parser.add_argument("--forward-pwm", type=float, default=0.28)
     parser.add_argument("--turn-pwm", type=float, default=0.30)
+    parser.add_argument("--align-first", dest="align_first", action="store_true", default=True)
+    parser.add_argument("--no-align-first", dest="align_first", action="store_false")
+    parser.add_argument("--align-tolerance-deg", type=float, default=2.0)
+    parser.add_argument("--align-timeout-seconds", type=float, default=10.0)
     parser.add_argument("--supply-voltage", type=float, default=7.4)
     parser.add_argument("--motor-voltage-limit", type=float, default=6.0)
     parser.add_argument("--move-timeout-seconds", type=float, default=8.0)
@@ -359,6 +482,8 @@ def parse_args() -> argparse.Namespace:
         dest="right_encoder_inverted",
         action="store_false",
     )
+    parser.add_argument("--brake-on-stop", dest="brake_on_stop", action="store_true", default=True)
+    parser.add_argument("--coast-on-stop", dest="brake_on_stop", action="store_false")
     parser.add_argument("--left-pwm", type=int, default=13)
     parser.add_argument("--left-in1", type=int, default=26)
     parser.add_argument("--left-in2", type=int, default=19)
@@ -414,8 +539,9 @@ def main() -> None:
     turn_target_counts = counts_for_distance(turn_arc_mm, millimeters_per_count)
     confirm_or_exit(args, straight_target_counts, turn_target_counts)
 
-    camera = CameraSource(args.camera_width, args.camera_height, args.camera_index)
+    camera = CameraSource(args)
     detector = ArucoDetector(args)
+    front_tof = FrontTof(args.front_tof, args.tof_settle_seconds)
     rig: CalibrationRig | None = None
     try:
         start = wait_for_marker(
@@ -430,6 +556,18 @@ def main() -> None:
 
         rig = CalibrationRig(args)
         rig.enable()
+        if args.align_first:
+            start = align_to_marker(
+                rig,
+                camera,
+                detector,
+                tolerance_deg=args.align_tolerance_deg,
+                pwm=args.turn_pwm,
+                timeout_seconds=args.align_timeout_seconds,
+            )
+        start_front_tof_mm = front_tof.read()
+        if start_front_tof_mm is not None:
+            print(f"front_tof_start: {start_front_tof_mm}mm", flush=True)
 
         left_counts, right_counts = drive_forward_counts(
             rig,
@@ -437,6 +575,9 @@ def main() -> None:
             pwm=args.forward_pwm,
             timeout_seconds=args.move_timeout_seconds,
         )
+        after_front_tof_mm = front_tof.read()
+        if after_front_tof_mm is not None:
+            print(f"front_tof_after_forward: {after_front_tof_mm}mm", flush=True)
         after_forward = wait_for_marker(
             camera,
             detector,
@@ -444,7 +585,12 @@ def main() -> None:
             label="after_forward",
         )
         encoder_distance_mm = ((left_counts + right_counts) / 2) * millimeters_per_count
-        fiducial_motion_mm = start.distance_mm - after_forward.distance_mm
+        fiducial_motion_mm = start.z_mm - after_forward.z_mm
+        tof_motion_mm = (
+            None
+            if start_front_tof_mm is None or after_front_tof_mm is None
+            else start_front_tof_mm - after_front_tof_mm
+        )
         distance_result = estimate_mm_per_count_multiplier(
             args.distance_mm,
             encoder_distance_mm,
@@ -485,6 +631,8 @@ def main() -> None:
         print(f"  Current mm/count:       {millimeters_per_count:.6f}")
         print(f"  Encoder straight:       {encoder_distance_mm:.1f} mm")
         print(f"  Fiducial straight:      {fiducial_motion_mm:.1f} mm")
+        if tof_motion_mm is not None:
+            print(f"  Front TOF straight ref: {tof_motion_mm:.1f} mm")
         print(f"  mm/count multiplier:    {distance_result.correction_multiplier:.5f}")
         print(f"  Suggested mm/count:     {corrected_mm_per_count:.6f}")
         print(f"  Suggested gear ratio:   {corrected_gear_ratio:.3f}")
@@ -498,6 +646,7 @@ def main() -> None:
     finally:
         if rig is not None:
             rig.close()
+        front_tof.close()
         camera.close()
 
 

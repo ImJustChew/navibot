@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 from navibot.robot.encoders import EncoderSample
 
@@ -18,9 +18,9 @@ class Pose2D:
 @dataclass(frozen=True)
 class DifferentialOdometryConfig:
     wheel_diameter_mm: float = 43.0
-    wheel_track_mm: float = 105.0
+    wheel_track_mm: float = 64.0
     pulses_per_channel: int = 7
-    gear_ratio: float = 105.6
+    gear_ratio: float = 132.0
 
 
 class DifferentialOdometry:
@@ -72,4 +72,3 @@ def normalize_angle(angle: float) -> float:
     while angle < -math.pi:
         angle += 2 * math.pi
     return angle
-

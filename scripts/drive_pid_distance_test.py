@@ -344,7 +344,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--distance-mm", type=float, default=200.0)
     parser.add_argument("--wheel-diameter-mm", type=float, default=43.0)
     parser.add_argument("--pulses-per-channel", type=int, default=7)
-    parser.add_argument("--gear-ratio", type=float, default=100.0)
+    parser.add_argument("--gear-ratio", type=float, default=132.0)
     parser.add_argument("--target-speed-mm-s", type=float, default=80.0)
     parser.add_argument("--min-pwm", type=float, default=0.18)
     parser.add_argument("--max-pwm", type=float, default=0.45)
